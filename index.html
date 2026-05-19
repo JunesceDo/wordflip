@@ -1,0 +1,1091 @@
+<!DOCTYPE html>
+<html lang="vi">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>WordFlip — Flashcard App</title>
+<link href="https://fonts.googleapis.com/css2?family=Fraunces:ital,wght@0,300;0,400;0,600;1,300&family=DM+Mono:wght@300;400&display=swap" rel="stylesheet">
+<script src="https://cdnjs.cloudflare.com/ajax/libs/xlsx/0.18.5/xlsx.full.min.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2/dist/umd/supabase.min.js"></script>
+<style>
+  :root {
+    --ink: #1a2a4a; --falcon: #f47320; --falcon-dark: #d45e00;
+    --paper: #fff; --cream: #fff3eb; --gold-light: #ffc09a;
+    --sage: #2e7d52; --rose: #c0392b; --muted: #7a4a20;
+    --card-w: 520px; --card-h: 300px;
+  }
+  * { box-sizing: border-box; margin: 0; padding: 0; }
+  body {
+    font-family: 'Fraunces', serif; color: var(--ink);
+    min-height: 100vh; display: flex; flex-direction: column;
+    background-image: linear-gradient(145deg, #e86000 0%, #f47320 50%, #f98d40 100%);
+    background-attachment: fixed;
+  }
+
+  /* HEADER */
+  header {
+    display: flex; align-items: center; justify-content: space-between;
+    padding: 14px 36px; gap: 16px; flex-wrap: wrap;
+    border-bottom: 1px solid rgba(0,0,0,0.12);
+    background: rgba(26,42,74,0.9);
+    backdrop-filter: blur(12px); position: sticky; top: 0; z-index: 100;
+  }
+  .logo { font-size: 1.3rem; font-weight: 600; color: #fff; white-space: nowrap; }
+  .logo span { color: #ffa060; font-style: italic; }
+
+  .tabs { display: flex; gap: 3px; padding: 3px; background: rgba(255,255,255,0.10); border-radius: 10px; border: 1px solid rgba(255,255,255,0.15); }
+  .tab { padding: 6px 13px; border: none; background: transparent; border-radius: 7px; font-family: 'Fraunces', serif; font-size: 0.8rem; cursor: pointer; color: rgba(255,255,255,0.72); transition: all 0.2s; white-space: nowrap; }
+  .tab.active { background: #fff; color: var(--falcon-dark); font-weight: 600; }
+
+  .header-right { display: flex; gap: 8px; align-items: center; }
+  .sync-dot { width: 8px; height: 8px; border-radius: 50%; background: rgba(255,255,255,0.3); transition: background 0.3s; flex-shrink: 0; }
+  .sync-dot.ok   { background: #6fcf97; box-shadow: 0 0 6px #6fcf97; }
+  .sync-dot.busy { background: #f2c94c; animation: blink 1s ease-in-out infinite; }
+  .sync-dot.err  { background: #eb5757; }
+  @keyframes blink { 0%,100%{opacity:1} 50%{opacity:0.4} }
+  .sync-label { font-family: 'DM Mono', monospace; font-size: 0.68rem; color: rgba(255,255,255,0.6); white-space: nowrap; }
+  .sync-label.ok  { color: #6fcf97; }
+  .sync-label.err { color: #eb5757; }
+  .btn-hdr { padding: 6px 13px; border: 1.5px solid rgba(255,255,255,0.28); border-radius: 20px; background: transparent; font-family: 'DM Mono', monospace; font-size: 0.68rem; cursor: pointer; color: rgba(255,255,255,0.82); transition: all 0.2s; white-space: nowrap; }
+  .btn-hdr:hover { background: #fff; color: var(--falcon-dark); border-color: #fff; }
+
+  /* MAIN */
+  main { flex: 1; padding: 28px 32px; max-width: 960px; margin: 0 auto; width: 100%; }
+  .view { display: none; }
+  .view.active { display: block; background: #fff; border-radius: 20px; padding: 34px; box-shadow: 0 12px 40px rgba(0,0,0,0.18); }
+
+  /* SHARED BUTTONS */
+  .btn-primary { padding: 10px 22px; background: var(--falcon); color: #fff; border: none; border-radius: 50px; font-family: 'Fraunces', serif; font-size: 0.88rem; cursor: pointer; transition: all 0.2s; display: inline-flex; align-items: center; gap: 7px; }
+  .btn-primary:hover { background: var(--falcon-dark); transform: translateY(-1px); box-shadow: 0 4px 14px rgba(0,0,0,0.15); }
+  .btn-secondary { padding: 9px 20px; background: transparent; color: var(--ink); border: 1.5px solid rgba(26,42,74,0.2); border-radius: 50px; font-family: 'Fraunces', serif; font-size: 0.88rem; cursor: pointer; transition: all 0.2s; display: inline-flex; align-items: center; gap: 7px; }
+  .btn-secondary:hover { border-color: var(--falcon); color: var(--falcon-dark); }
+  .btn-sm { padding: 5px 13px; border-radius: 20px; font-family: 'DM Mono', monospace; font-size: 0.7rem; cursor: pointer; border: 1px solid rgba(26,26,46,0.14); background: transparent; transition: all 0.2s; }
+  .btn-sm:hover { background: var(--falcon); color: #fff; border-color: var(--falcon); }
+  .btn-sm-danger:hover { background: var(--rose); color: #fff; border-color: var(--rose); }
+  .btn-group { display: flex; gap: 9px; flex-wrap: wrap; }
+
+  .empty-state { text-align: center; padding: 56px 20px; display: flex; flex-direction: column; align-items: center; gap: 13px; }
+  .empty-icon { font-size: 2.8rem; }
+  .empty-title { font-size: 1.45rem; font-weight: 300; }
+  .empty-sub { color: var(--muted); font-family: 'DM Mono', monospace; font-size: 0.78rem; }
+  .sec-title { font-size: 1.6rem; font-weight: 300; }
+  .sec-sub { font-family: 'DM Mono', monospace; font-size: 0.76rem; color: var(--muted); margin-top: 4px; }
+  .sec-header { display: flex; justify-content: space-between; align-items: flex-start; margin-bottom: 26px; gap: 12px; }
+
+  /* STUDY */
+  .study-top { display: flex; justify-content: space-between; align-items: center; margin-bottom: 24px; }
+  .study-name { font-size: 1.5rem; font-weight: 300; }
+  .progress-info { font-family: 'DM Mono', monospace; font-size: 0.76rem; color: var(--muted); }
+  .prog-track { width: 100%; height: 3px; background: rgba(0,0,0,0.08); border-radius: 2px; margin-bottom: 32px; overflow: hidden; }
+  .prog-fill { height: 100%; background: linear-gradient(90deg, #e85500, #ffa040); border-radius: 2px; transition: width 0.5s; }
+  .card-area { display: flex; flex-direction: column; align-items: center; gap: 22px; }
+  .card-scene { width: var(--card-w); height: var(--card-h); perspective: 1200px; cursor: pointer; }
+  .card-inner { width: 100%; height: 100%; position: relative; transform-style: preserve-3d; transition: transform 0.6s cubic-bezier(0.4,0,0.2,1); }
+  .card-inner.flipped { transform: rotateY(180deg); }
+  .card-face { position: absolute; inset: 0; backface-visibility: hidden; -webkit-backface-visibility: hidden; border-radius: 20px; display: flex; flex-direction: column; align-items: center; justify-content: center; padding: 38px; gap: 11px; box-shadow: 0 4px 6px rgba(0,0,0,0.04), 0 18px 36px rgba(0,0,0,0.08); }
+  .card-front { background: #fff; border: 1px solid rgba(26,26,46,0.08); }
+  .card-back { background: var(--ink); color: #fff; transform: rotateY(180deg); }
+  .card-label { font-family: 'DM Mono', monospace; font-size: 0.67rem; letter-spacing: 0.12em; text-transform: uppercase; opacity: 0.35; }
+  .card-word { font-size: 2.1rem; font-weight: 300; letter-spacing: -0.02em; text-align: center; line-height: 1.2; }
+  .card-phonetic { font-family: 'DM Mono', monospace; font-size: 0.8rem; color: var(--muted); }
+  .card-back .card-phonetic { color: #ffa060; }
+  .card-example { font-size: 0.8rem; font-family: 'DM Mono', monospace; color: rgba(255,255,255,0.42); text-align: center; max-width: 360px; line-height: 1.6; }
+  .flip-hint { font-family: 'DM Mono', monospace; font-size: 0.68rem; color: var(--muted); opacity: 0.5; animation: pulse 2s ease-in-out infinite; }
+  @keyframes pulse { 0%,100%{opacity:0.32}50%{opacity:0.68} }
+  .rating-row { display: flex; gap: 9px; margin-top: 2px; opacity: 0; transform: translateY(14px); transition: all 0.4s ease; pointer-events: none; }
+  .rating-row.visible { opacity: 1; transform: translateY(0); pointer-events: all; }
+  .rating-btn { padding: 10px 20px; border: 1.5px solid transparent; border-radius: 50px; font-family: 'Fraunces', serif; font-size: 0.86rem; cursor: pointer; transition: all 0.2s; display: flex; flex-direction: column; align-items: center; gap: 2px; }
+  .rating-btn small { font-family: 'DM Mono', monospace; font-size: 0.62rem; opacity: 0.58; letter-spacing: 0.04em; }
+  .btn-again { background: rgba(192,57,43,0.08); border-color: var(--rose); color: var(--rose); }
+  .btn-hard  { background: rgba(244,115,32,0.10); border-color: var(--falcon); color: var(--falcon-dark); }
+  .btn-good  { background: rgba(46,125,82,0.10); border-color: var(--sage); color: var(--sage); }
+  .btn-easy  { background: rgba(26,42,74,0.07); border-color: var(--ink); color: var(--ink); }
+  .rating-btn:hover { transform: translateY(-2px); box-shadow: 0 5px 16px rgba(0,0,0,0.1); }
+
+  /* QUIZ */
+  .quiz-label { font-family: 'DM Mono', monospace; font-size: 0.7rem; color: var(--muted); letter-spacing: 0.05em; margin-bottom: 6px; }
+  .quiz-question { font-size: 1.75rem; font-weight: 300; text-align: center; padding: 28px 36px; background: var(--cream); border-radius: 16px; line-height: 1.3; margin-bottom: 10px; }
+  .quiz-phonetic { font-family: 'DM Mono', monospace; font-size: 0.82rem; color: var(--muted); text-align: center; margin-bottom: 24px; }
+  .quiz-options { display: grid; grid-template-columns: 1fr 1fr; gap: 11px; max-width: 540px; margin: 0 auto; }
+  .quiz-option { padding: 15px 18px; border: 2px solid rgba(26,42,74,0.11); border-radius: 13px; background: #fff; font-family: 'Fraunces', serif; font-size: 0.96rem; cursor: pointer; transition: all 0.2s; text-align: left; line-height: 1.4; color: var(--ink); }
+  .quiz-option:hover:not(:disabled) { border-color: var(--falcon); background: var(--cream); }
+  .quiz-option.correct { border-color: var(--sage) !important; background: rgba(46,125,82,0.08) !important; color: var(--sage); }
+  .quiz-option.wrong   { border-color: var(--rose) !important; background: rgba(192,57,43,0.08) !important; color: var(--rose); }
+  .quiz-option:disabled { cursor: default; }
+  .quiz-feedback { text-align: center; font-family: 'DM Mono', monospace; font-size: 0.8rem; padding: 11px 18px; border-radius: 10px; margin: 14px auto 0; max-width: 380px; opacity: 0; transition: opacity 0.3s; }
+  .quiz-feedback.show { opacity: 1; }
+  .quiz-feedback.ok  { background: rgba(46,125,82,0.1); color: var(--sage); }
+  .quiz-feedback.bad { background: rgba(192,57,43,0.1); color: var(--rose); }
+  .quiz-next { display: none; margin: 18px auto 0; padding: 11px 30px; background: var(--ink); color: #fff; border: none; border-radius: 50px; font-family: 'Fraunces', serif; font-size: 0.92rem; cursor: pointer; transition: all 0.2s; }
+  .quiz-next:hover { background: var(--falcon); }
+
+  /* LIBRARY */
+  .deck-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(255px, 1fr)); gap: 15px; }
+  .deck-card { background: #fff; border: 1px solid rgba(26,26,46,0.08); border-radius: 15px; padding: 20px; transition: all 0.25s; display: flex; flex-direction: column; gap: 9px; box-shadow: 0 2px 8px rgba(0,0,0,0.04); }
+  .deck-card:hover { transform: translateY(-3px); box-shadow: 0 8px 24px rgba(0,0,0,0.11); }
+  .deck-card-name { font-size: 1rem; font-weight: 600; }
+  .deck-card-count { font-family: 'DM Mono', monospace; font-size: 0.74rem; color: var(--muted); }
+  .deck-card-stats { display: flex; gap: 7px; flex-wrap: wrap; }
+  .stat-pill { font-family: 'DM Mono', monospace; font-size: 0.66rem; padding: 3px 9px; border-radius: 20px; }
+  .stat-new    { background: rgba(46,125,82,0.12); color: #1e6b42; }
+  .stat-review { background: rgba(244,115,32,0.12); color: #c45000; }
+  .stat-due    { background: rgba(192,57,43,0.12); color: #c0392b; }
+  .deck-actions { display: flex; gap: 7px; flex-wrap: wrap; margin-top: 3px; }
+
+  /* STATS */
+  .stats-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(155px, 1fr)); gap: 13px; margin-bottom: 28px; }
+  .stat-card { background: var(--cream); border-radius: 13px; padding: 18px 20px; display: flex; flex-direction: column; gap: 5px; }
+  .stat-val { font-size: 2rem; font-weight: 300; color: var(--ink); line-height: 1; }
+  .stat-lbl { font-family: 'DM Mono', monospace; font-size: 0.68rem; color: var(--muted); letter-spacing: 0.05em; }
+  .stat-sub { font-family: 'DM Mono', monospace; font-size: 0.63rem; color: var(--falcon-dark); }
+  .stats-section { margin-top: 26px; }
+  .stats-section-title { font-size: 1rem; font-weight: 600; margin-bottom: 14px; padding-bottom: 9px; border-bottom: 1px solid rgba(0,0,0,0.07); }
+  .bar-row { display: flex; align-items: center; gap: 11px; margin-bottom: 9px; }
+  .bar-label { font-family: 'DM Mono', monospace; font-size: 0.7rem; width: 58px; flex-shrink: 0; color: var(--muted); }
+  .bar-track { flex: 1; height: 7px; background: rgba(0,0,0,0.07); border-radius: 4px; overflow: hidden; }
+  .bar-fill { height: 100%; border-radius: 4px; transition: width 0.6s; }
+  .fill-new { background: #2e7d52; } .fill-due { background: var(--rose); } .fill-review { background: var(--falcon); }
+  .heatmap { display: grid; grid-template-columns: repeat(7, 1fr); gap: 4px; margin-top: 12px; }
+  .hm-cell { aspect-ratio: 1; border-radius: 3px; background: rgba(0,0,0,0.06); }
+  .hm-cell[data-lv="1"] { background: rgba(244,115,32,0.22); }
+  .hm-cell[data-lv="2"] { background: rgba(244,115,32,0.48); }
+  .hm-cell[data-lv="3"] { background: rgba(244,115,32,0.74); }
+  .hm-cell[data-lv="4"] { background: var(--falcon); }
+
+  /* IMPORT */
+  .import-wrap { max-width: 620px; }
+  .dropzone { border: 2px dashed rgba(26,42,74,0.18); border-radius: 15px; padding: 40px; text-align: center; transition: all 0.3s; cursor: pointer; background: rgba(255,255,255,0.4); }
+  .dropzone:hover, .dropzone.drag-over { border-color: var(--falcon); background: rgba(244,115,32,0.04); }
+  .drop-icon { font-size: 2.2rem; margin-bottom: 10px; }
+  .drop-title { font-size: 1rem; margin-bottom: 5px; }
+  .drop-sub { color: var(--muted); font-family: 'DM Mono', monospace; font-size: 0.74rem; }
+  .import-form { margin-top: 22px; display: flex; flex-direction: column; gap: 15px; }
+  .form-group { display: flex; flex-direction: column; gap: 5px; }
+  .form-label { font-family: 'DM Mono', monospace; font-size: 0.7rem; letter-spacing: 0.08em; text-transform: uppercase; opacity: 0.58; }
+  .form-input { padding: 9px 13px; border: 1.5px solid rgba(26,42,74,0.14); border-radius: 9px; font-family: 'Fraunces', serif; font-size: 0.93rem; background: #fff; outline: none; transition: border-color 0.2s; }
+  .form-input:focus { border-color: var(--falcon); box-shadow: 0 0 0 3px rgba(244,115,32,0.12); }
+  .col-map { display: grid; grid-template-columns: 1fr 1fr 1fr; gap: 11px; }
+  .form-select { padding: 8px 11px; border: 1.5px solid rgba(26,42,74,0.14); border-radius: 9px; font-family: 'DM Mono', monospace; font-size: 0.76rem; background: #fff; outline: none; cursor: pointer; transition: border-color 0.2s; }
+  .form-select:focus { border-color: var(--falcon); }
+  .preview-table { width: 100%; border-collapse: collapse; font-size: 0.78rem; margin-top: 9px; font-family: 'DM Mono', monospace; }
+  .preview-table th { background: var(--cream); padding: 7px 11px; text-align: left; font-weight: 400; border-bottom: 1px solid rgba(26,42,74,0.09); }
+  .preview-table td { padding: 6px 11px; border-bottom: 1px solid rgba(26,42,74,0.05); color: var(--muted); }
+  .md-guide { background: var(--cream); border-radius: 13px; padding: 17px 20px; margin-top: 22px; }
+  .md-guide-title { font-family: 'DM Mono', monospace; font-size: 0.72rem; letter-spacing: 0.06em; margin-bottom: 13px; opacity: 0.62; text-transform: uppercase; }
+  .md-formats { display: grid; grid-template-columns: 1fr 1fr; gap: 13px; }
+  .md-fmt-lbl { font-family: 'DM Mono', monospace; font-size: 0.66rem; color: var(--falcon-dark); margin-bottom: 5px; }
+  .md-code { font-family: 'DM Mono', monospace; font-size: 0.68rem; background: #fff; border-radius: 7px; padding: 8px 11px; color: var(--muted); line-height: 1.6; white-space: pre-wrap; border-left: 3px solid var(--gold-light); }
+
+  /* MODAL */
+  .modal-overlay { position: fixed; inset: 0; background: rgba(0,0,0,0.45); z-index: 200; display: flex; align-items: center; justify-content: center; padding: 20px; opacity: 0; pointer-events: none; transition: opacity 0.25s; }
+  .modal-overlay.open { opacity: 1; pointer-events: all; }
+  .modal { background: #fff; border-radius: 20px; padding: 34px; width: 100%; max-width: 560px; max-height: 92vh; overflow-y: auto; box-shadow: 0 24px 60px rgba(0,0,0,0.25); transform: translateY(20px); transition: transform 0.25s; }
+  .modal-overlay.open .modal { transform: translateY(0); }
+  .modal-title { font-size: 1.35rem; font-weight: 300; margin-bottom: 4px; }
+  .modal-sub { font-family: 'DM Mono', monospace; font-size: 0.73rem; color: var(--muted); margin-bottom: 22px; }
+  .modal-footer { display: flex; gap: 10px; justify-content: flex-end; margin-top: 22px; }
+  .card-list { display: flex; flex-direction: column; gap: 9px; margin-bottom: 12px; max-height: 340px; overflow-y: auto; }
+  .card-row { display: grid; grid-template-columns: 1fr 1fr auto; gap: 8px; align-items: start; padding: 11px 12px; background: var(--cream); border-radius: 10px; }
+  .card-input { padding: 8px 11px; border: 1.5px solid rgba(26,42,74,0.12); border-radius: 8px; font-family: 'Fraunces', serif; font-size: 0.88rem; outline: none; width: 100%; transition: border-color 0.2s; background: #fff; }
+  .card-input:focus { border-color: var(--falcon); }
+  .card-input.phonetic-input { grid-column: 1 / 3; font-size: 0.78rem; margin-top: -2px; }
+  .remove-btn { width: 27px; height: 27px; border: none; background: rgba(192,57,43,0.1); color: var(--rose); border-radius: 50%; cursor: pointer; font-size: 1rem; display: flex; align-items: center; justify-content: center; transition: all 0.2s; flex-shrink: 0; margin-top: 5px; }
+  .remove-btn:hover { background: var(--rose); color: #fff; }
+  .add-row-btn { width: 100%; padding: 9px; border: 1.5px dashed rgba(26,42,74,0.18); border-radius: 10px; background: transparent; color: var(--muted); font-family: 'DM Mono', monospace; font-size: 0.76rem; cursor: pointer; transition: all 0.2s; }
+  .add-row-btn:hover { border-color: var(--falcon); color: var(--falcon-dark); background: var(--cream); }
+
+  /* SETUP SCREEN */
+  .setup-screen { position: fixed; inset: 0; background: linear-gradient(145deg, #e86000, #f47320, #f98d40); display: flex; align-items: center; justify-content: center; z-index: 300; padding: 20px; }
+  .setup-card { background: #fff; border-radius: 24px; padding: 44px; max-width: 520px; width: 100%; box-shadow: 0 24px 60px rgba(0,0,0,0.25); }
+  .setup-logo { font-size: 2rem; font-weight: 600; color: var(--ink); margin-bottom: 4px; }
+  .setup-logo span { color: var(--falcon); font-style: italic; }
+  .setup-title { font-size: 1.1rem; font-weight: 300; color: var(--muted); margin-bottom: 32px; font-family: 'DM Mono', monospace; font-size: 0.82rem; }
+  .setup-group { display: flex; flex-direction: column; gap: 6px; margin-bottom: 16px; }
+  .setup-note { font-family: 'DM Mono', monospace; font-size: 0.7rem; color: var(--muted); line-height: 1.6; margin-top: 4px; }
+  .setup-note a { color: var(--falcon); }
+  .setup-note code { background: var(--cream); padding: 1px 5px; border-radius: 4px; }
+  .setup-divider { border: none; border-top: 1px solid rgba(0,0,0,0.08); margin: 24px 0; }
+  .setup-skip { font-family: 'DM Mono', monospace; font-size: 0.72rem; color: var(--muted); text-align: center; cursor: pointer; text-decoration: underline; margin-top: 12px; display: block; }
+
+  /* TOAST */
+  .toast { position: fixed; bottom: 26px; right: 26px; background: var(--ink); color: #fff; padding: 11px 18px; border-radius: 11px; font-family: 'DM Mono', monospace; font-size: 0.78rem; transform: translateY(80px); opacity: 0; transition: all 0.3s cubic-bezier(0.4,0,0.2,1); z-index: 999; max-width: 290px; }
+  .toast.show { transform: translateY(0); opacity: 1; }
+  .toast.success::before { content: '✓ '; color: #6fcf97; }
+  .toast.error::before   { content: '✕ '; color: #eb5757; }
+
+  @media (max-width: 640px) {
+    :root { --card-w: 100%; --card-h: 260px; }
+    main { padding: 12px 14px; }
+    header { padding: 11px 14px; }
+    .view.active { padding: 18px; }
+    .rating-row { flex-wrap: wrap; justify-content: center; }
+    .col-map, .quiz-options, .md-formats { grid-template-columns: 1fr; }
+    .tabs { flex-wrap: wrap; }
+    .header-right { gap: 6px; }
+  }
+</style>
+</head>
+<body>
+
+<!-- SETUP SCREEN (chỉ hiện lần đầu) -->
+<div class="setup-screen" id="setup-screen" style="display:none">
+  <div class="setup-card">
+    <div class="setup-logo">Word<span>Flip</span></div>
+    <div class="setup-title">Kết nối Supabase để sync đa thiết bị</div>
+
+    <div class="setup-group">
+      <label class="form-label">Supabase URL</label>
+      <input class="form-input" id="setup-url" placeholder="https://xxxx.supabase.co">
+    </div>
+    <div class="setup-group">
+      <label class="form-label">Anon Key</label>
+      <input class="form-input" id="setup-key" placeholder="eyJhbGciOiJIUzI1NiIsInR5cCI6Ik..." type="password">
+      <div class="setup-note">
+        Lấy tại <a href="https://app.supabase.com" target="_blank">app.supabase.com</a>
+        → Project → Settings → API<br>
+        Dùng <code>anon public</code> key (không phải service_role)
+      </div>
+    </div>
+
+    <hr class="setup-divider">
+
+    <button class="btn-primary" style="width:100%;justify-content:center" onclick="setupConnect()">
+      🔗 Kết nối và bắt đầu
+    </button>
+    <span class="setup-skip" onclick="setupSkip()">Dùng offline (không sync)</span>
+  </div>
+</div>
+
+<header>
+  <div class="logo">Word<span>Flip</span></div>
+  <div class="tabs">
+    <button class="tab active" onclick="switchView('study')">📖 Học</button>
+    <button class="tab" onclick="switchView('quiz')">🎯 Thi</button>
+    <button class="tab" onclick="switchView('library')">🗂 Bộ thẻ</button>
+    <button class="tab" onclick="switchView('stats')">📊 Thống kê</button>
+    <button class="tab" onclick="switchView('import')">＋ Import</button>
+  </div>
+  <div class="header-right">
+    <div class="sync-dot" id="sync-dot"></div>
+    <span class="sync-label" id="sync-label">offline</span>
+    <button class="btn-hdr" onclick="manualSync()" id="btn-sync" style="display:none">↺ Sync</button>
+    <button class="btn-hdr" onclick="showSetup()">⚙</button>
+  </div>
+</header>
+
+<main>
+
+<!-- STUDY -->
+<div class="view active" id="view-study">
+  <div id="study-empty" class="empty-state">
+    <div class="empty-icon">📖</div>
+    <div class="empty-title">Chưa có bộ thẻ nào</div>
+    <div class="empty-sub">Import file hoặc thêm thẻ thủ công để bắt đầu</div>
+    <div class="btn-group" style="margin-top:12px">
+      <button class="btn-primary" onclick="switchView('import')">＋ Import file</button>
+      <button class="btn-secondary" onclick="openAddModal()">✎ Thêm thủ công</button>
+    </div>
+  </div>
+  <div id="study-content" style="display:none">
+    <div class="study-top">
+      <div class="study-name" id="study-deck-name">—</div>
+      <div class="progress-info" id="progress-info"></div>
+    </div>
+    <div class="prog-track"><div class="prog-fill" id="progress-fill" style="width:0%"></div></div>
+    <div class="card-area">
+      <div class="card-scene" onclick="flipCard()">
+        <div class="card-inner" id="card-inner">
+          <div class="card-face card-front">
+            <div class="card-label">TỪ VỰNG</div>
+            <div class="card-word" id="card-front-word">—</div>
+            <div class="card-phonetic" id="card-front-phonetic"></div>
+            <div class="flip-hint">↕ nhấp để lật · Space</div>
+          </div>
+          <div class="card-face card-back">
+            <div class="card-label" style="color:var(--gold-light)">NGHĨA</div>
+            <div class="card-word" id="card-back-meaning">—</div>
+            <div class="card-example" id="card-back-example"></div>
+          </div>
+        </div>
+      </div>
+      <div class="rating-row" id="rating-row">
+        <button class="rating-btn btn-again" onclick="rate(0)">Quên<small>Học lại</small></button>
+        <button class="rating-btn btn-hard"  onclick="rate(1)">Khó<small>+1 ngày</small></button>
+        <button class="rating-btn btn-good"  onclick="rate(2)">Nhớ<small>+3 ngày</small></button>
+        <button class="rating-btn btn-easy"  onclick="rate(3)">Dễ<small>+7 ngày</small></button>
+      </div>
+    </div>
+  </div>
+  <div id="study-done" class="empty-state" style="display:none">
+    <div class="empty-icon">🌿</div>
+    <div class="empty-title">Xong buổi học!</div>
+    <div class="empty-sub" id="done-stats"></div>
+    <div class="btn-group" style="margin-top:14px">
+      <button class="btn-primary" onclick="startDeck(currentDeckId)">↺ Học lại</button>
+      <button class="btn-secondary" onclick="switchView('library')">← Thư viện</button>
+    </div>
+  </div>
+</div>
+
+<!-- QUIZ -->
+<div class="view" id="view-quiz">
+  <div id="quiz-empty" class="empty-state">
+    <div class="empty-icon">🎯</div>
+    <div class="empty-title">Chưa chọn bộ thẻ</div>
+    <div class="empty-sub">Vào thư viện → nhấn "Thi" để bắt đầu</div>
+    <button class="btn-primary" style="margin-top:12px" onclick="switchView('library')">Đến thư viện</button>
+  </div>
+  <div id="quiz-content" style="display:none">
+    <div class="study-top">
+      <div class="study-name" id="quiz-deck-name">—</div>
+      <div class="progress-info" id="quiz-progress"></div>
+    </div>
+    <div class="prog-track"><div class="prog-fill" id="quiz-fill" style="width:0%"></div></div>
+    <div class="quiz-label">Chọn nghĩa đúng:</div>
+    <div class="quiz-question" id="quiz-q">—</div>
+    <div class="quiz-phonetic" id="quiz-ph"></div>
+    <div class="quiz-options" id="quiz-opts"></div>
+    <div class="quiz-feedback" id="quiz-fb"></div>
+    <button class="quiz-next" id="quiz-next-btn" onclick="quizNext()">Tiếp theo →</button>
+  </div>
+  <div id="quiz-done" class="empty-state" style="display:none">
+    <div class="empty-icon" id="quiz-emoji">🏆</div>
+    <div class="empty-title" id="quiz-score-title">—</div>
+    <div class="empty-sub" id="quiz-score-sub"></div>
+    <div class="btn-group" style="margin-top:14px">
+      <button class="btn-primary" onclick="startQuiz(currentQuizDeckId)">↺ Thử lại</button>
+      <button class="btn-secondary" onclick="switchView('library')">← Thư viện</button>
+    </div>
+  </div>
+</div>
+
+<!-- LIBRARY -->
+<div class="view" id="view-library">
+  <div class="sec-header">
+    <div><div class="sec-title">Bộ thẻ của bạn</div></div>
+    <div class="btn-group">
+      <button class="btn-secondary" onclick="openAddModal()">✎ Thêm thủ công</button>
+      <button class="btn-primary" onclick="switchView('import')">＋ Import file</button>
+    </div>
+  </div>
+  <div class="deck-grid" id="deck-grid"></div>
+</div>
+
+<!-- STATS -->
+<div class="view" id="view-stats">
+  <div class="sec-title">Thống kê học tập</div>
+  <div class="sec-sub" id="stats-time" style="margin-bottom:22px">—</div>
+  <div class="stats-grid" id="stats-grid"></div>
+  <div id="stats-body"></div>
+</div>
+
+<!-- IMPORT -->
+<div class="view" id="view-import">
+  <div class="import-wrap">
+    <div class="sec-title">Import từ file</div>
+    <div class="sec-sub" style="margin-bottom:22px">Hỗ trợ .xlsx · .xls · .csv · .md</div>
+    <div class="dropzone" id="dropzone" onclick="document.getElementById('file-input').click()">
+      <div class="drop-icon">📂</div>
+      <div class="drop-title">Kéo thả hoặc nhấp để chọn file</div>
+      <div class="drop-sub">.xlsx / .xls / .csv / .md</div>
+      <input type="file" id="file-input" accept=".xlsx,.xls,.csv,.md,.markdown" style="display:none" onchange="handleFile(this.files[0])">
+    </div>
+    <div class="import-form" id="import-form" style="display:none">
+      <div class="form-group">
+        <label class="form-label">Tên bộ thẻ</label>
+        <input class="form-input" id="deck-name-input" placeholder="VD: IELTS Vocabulary...">
+      </div>
+      <div class="form-group">
+        <label class="form-label">Ánh xạ cột</label>
+        <div class="col-map">
+          <div class="form-group"><label class="form-label" style="font-size:0.63rem">Từ / Mặt trước</label><select class="form-select" id="col-word"></select></div>
+          <div class="form-group"><label class="form-label" style="font-size:0.63rem">Nghĩa / Mặt sau</label><select class="form-select" id="col-meaning"></select></div>
+          <div class="form-group"><label class="form-label" style="font-size:0.63rem">Phiên âm (tuỳ chọn)</label><select class="form-select" id="col-phonetic"><option value="">— bỏ qua —</option></select></div>
+        </div>
+        <div class="form-group" style="margin-top:8px"><label class="form-label" style="font-size:0.63rem">Ví dụ (tuỳ chọn)</label><select class="form-select" id="col-example"><option value="">— bỏ qua —</option></select></div>
+      </div>
+      <div class="form-group"><label class="form-label">Xem trước</label><div id="preview-area"></div></div>
+      <button class="btn-primary" onclick="importDeck()" style="align-self:flex-start">✓ Tạo bộ thẻ</button>
+    </div>
+    <div class="md-guide" id="md-guide" style="display:none">
+      <div class="md-guide-title">📋 Định dạng Markdown được hỗ trợ</div>
+      <div class="md-formats">
+        <div><div class="md-fmt-lbl">Bảng</div><pre class="md-code">| Từ | Nghĩa |
+|---|---|
+| abandon | từ bỏ |</pre></div>
+        <div><div class="md-fmt-lbl">Bullet list</div><pre class="md-code">- abandon :: từ bỏ
+- benefit :: lợi ích</pre></div>
+        <div><div class="md-fmt-lbl">Q&A style</div><pre class="md-code">Q: abandon
+A: từ bỏ</pre></div>
+        <div><div class="md-fmt-lbl">Heading + nội dung</div><pre class="md-code">## abandon
+từ bỏ, rời bỏ</pre></div>
+      </div>
+    </div>
+  </div>
+</div>
+
+</main>
+
+<!-- ADD MODAL -->
+<div class="modal-overlay" id="modal-overlay">
+  <div class="modal" onclick="event.stopPropagation()">
+    <div class="modal-title">Thêm thẻ thủ công</div>
+    <div class="modal-sub">Tạo bộ thẻ mới hoặc thêm vào bộ có sẵn</div>
+    <div class="form-group" style="margin-bottom:13px">
+      <label class="form-label">Bộ thẻ</label>
+      <select class="form-select" id="modal-deck-sel" style="width:100%" onchange="onDeckSelChange()">
+        <option value="__new__">＋ Tạo bộ thẻ mới...</option>
+      </select>
+    </div>
+    <div id="modal-new-group" class="form-group" style="margin-bottom:13px">
+      <label class="form-label">Tên bộ thẻ mới</label>
+      <input class="form-input" id="modal-new-name" placeholder="VD: Business English...">
+    </div>
+    <div class="card-list" id="modal-card-list"></div>
+    <button class="add-row-btn" onclick="addCardRow()">＋ Thêm dòng</button>
+    <div class="modal-footer">
+      <button class="btn-secondary" onclick="closeAddModal()">Huỷ</button>
+      <button class="btn-primary" onclick="saveManualCards()">💾 Lưu</button>
+    </div>
+  </div>
+</div>
+<div class="toast" id="toast"></div>
+
+<script>
+// ════════════════════════════════════════════════════════
+// CONFIG — điền sau khi setup Supabase
+// ════════════════════════════════════════════════════════
+const CONFIG = {
+  SUPABASE_URL: localStorage.getItem('wf_sb_url') || '',
+  SUPABASE_KEY: localStorage.getItem('wf_sb_key') || '',
+};
+
+// ─── STATE ────────────────────────────────────────────
+let sb = null;  // Supabase client
+let decks    = JSON.parse(localStorage.getItem('wf_decks') || '{}');
+let studyLog = JSON.parse(localStorage.getItem('wf_log')   || '{}');
+let rawData = [], columns = [];
+let currentDeckId = null, studyQueue = [], currentIdx = 0, isFlipped = false;
+let sessionStats = { again:0, hard:0, good:0, easy:0 };
+let currentQuizDeckId = null, quizQueue = [], quizIdx = 0, quizCorrect = 0, quizAnswered = false;
+let syncPending = false;
+
+// ─── LOCAL SAVE ───────────────────────────────────────
+function save() { localStorage.setItem('wf_decks', JSON.stringify(decks)); }
+function logStudy(n=1) {
+  const k = new Date().toISOString().slice(0,10);
+  studyLog[k] = (studyLog[k]||0) + n;
+  localStorage.setItem('wf_log', JSON.stringify(studyLog));
+  if (sb) schedulePush();
+}
+
+// ─── SUPABASE SETUP ───────────────────────────────────
+function initSupabase(url, key) {
+  try {
+    sb = supabase.createClient(url, key);
+    CONFIG.SUPABASE_URL = url;
+    CONFIG.SUPABASE_KEY = key;
+    setSyncStatus('ok', '☁ kết nối');
+    document.getElementById('btn-sync').style.display = 'inline-block';
+    return true;
+  } catch(e) {
+    sb = null;
+    setSyncStatus('err', 'lỗi kết nối');
+    return false;
+  }
+}
+
+function setSyncStatus(state, label) {
+  const dot = document.getElementById('sync-dot');
+  const lbl = document.getElementById('sync-label');
+  dot.className = 'sync-dot ' + state;
+  lbl.className = 'sync-label ' + (state === 'ok' ? 'ok' : state === 'err' ? 'err' : '');
+  lbl.textContent = label;
+}
+
+// ─── SETUP SCREEN ─────────────────────────────────────
+function showSetup() {
+  document.getElementById('setup-url').value = CONFIG.SUPABASE_URL;
+  document.getElementById('setup-key').value = CONFIG.SUPABASE_KEY;
+  document.getElementById('setup-screen').style.display = 'flex';
+}
+function hideSetup() { document.getElementById('setup-screen').style.display = 'none'; }
+
+async function setupConnect() {
+  const url = document.getElementById('setup-url').value.trim();
+  const key = document.getElementById('setup-key').value.trim();
+  if (!url || !key) { toast('Vui lòng nhập URL và Key', 'error'); return; }
+
+  setSyncStatus('busy', '⏳ đang kết nối...');
+  // Test connection
+  const testClient = supabase.createClient(url, key);
+  const { error } = await testClient.from('decks').select('id').limit(1);
+  if (error && error.code !== 'PGRST116') {
+    setSyncStatus('err', 'lỗi kết nối');
+    toast('Lỗi: ' + error.message + '\nKiểm tra URL/Key và đã chạy schema.sql chưa?', 'error');
+    return;
+  }
+
+  // Save credentials
+  localStorage.setItem('wf_sb_url', url);
+  localStorage.setItem('wf_sb_key', key);
+  initSupabase(url, key);
+  hideSetup();
+  toast('Kết nối Supabase thành công!');
+  // Pull existing data from server
+  await pullFromSupabase();
+}
+
+function setupSkip() {
+  hideSetup();
+  setSyncStatus('', 'offline');
+}
+
+// ─── SUPABASE SYNC ────────────────────────────────────
+let pushTimer = null;
+function schedulePush() {
+  clearTimeout(pushTimer);
+  pushTimer = setTimeout(() => pushToSupabase(), 2000); // debounce 2s
+}
+
+async function pushToSupabase() {
+  if (!sb) return;
+  setSyncStatus('busy', '⏳ đang lưu...');
+  try {
+    // Upsert all decks
+    const deckRows = Object.entries(decks).map(([id, d]) => ({
+      id, name: d.name
+    }));
+    if (deckRows.length) {
+      const { error: de } = await sb.from('decks').upsert(deckRows, { onConflict: 'id' });
+      if (de) throw de;
+    }
+
+    // Upsert all cards — delete then re-insert per deck (simplest for batch)
+    for (const [deckId, d] of Object.entries(decks)) {
+      // Delete existing cards for this deck
+      await sb.from('cards').delete().eq('deck_id', deckId);
+      // Re-insert
+      if (d.cards.length) {
+        const cardRows = d.cards.map(c => ({
+          deck_id: deckId,
+          word: c.word, meaning: c.meaning,
+          phonetic: c.phonetic || '', example: c.example || '',
+          due: c.due || null, interval: c.interval || 0
+        }));
+        const { error: ce } = await sb.from('cards').insert(cardRows);
+        if (ce) throw ce;
+      }
+    }
+
+    // Upsert study log
+    const logRows = Object.entries(studyLog).map(([date, count]) => ({ date, count }));
+    if (logRows.length) {
+      const { error: le } = await sb.from('study_log').upsert(logRows, { onConflict: 'date' });
+      if (le) throw le;
+    }
+
+    setSyncStatus('ok', '✓ đã lưu ' + new Date().toLocaleTimeString('vi-VN'));
+  } catch(err) {
+    setSyncStatus('err', '✗ lỗi sync');
+    console.error('Push error:', err);
+  }
+}
+
+async function pullFromSupabase() {
+  if (!sb) return;
+  setSyncStatus('busy', '⏳ đang tải...');
+  try {
+    // Fetch decks
+    const { data: deckData, error: de } = await sb.from('decks').select('id, name').order('created_at');
+    if (de) throw de;
+
+    // Fetch all cards
+    const { data: cardData, error: ce } = await sb.from('cards')
+      .select('deck_id, word, meaning, phonetic, example, due, interval')
+      .order('id');
+    if (ce) throw ce;
+
+    // Fetch study log
+    const { data: logData, error: le } = await sb.from('study_log').select('date, count');
+    if (le) throw le;
+
+    if (!deckData || !deckData.length) {
+      // Server empty — push local data up
+      setSyncStatus('ok', '☁ kết nối');
+      if (Object.keys(decks).length) {
+        toast('Server trống — đang đẩy dữ liệu local lên...');
+        await pushToSupabase();
+      }
+      return;
+    }
+
+    // Build decks from server data
+    const serverDecks = {};
+    for (const d of deckData) serverDecks[d.id] = { name: d.name, cards: [] };
+    for (const c of (cardData || [])) {
+      if (serverDecks[c.deck_id]) {
+        serverDecks[c.deck_id].cards.push({
+          word: c.word, meaning: c.meaning, phonetic: c.phonetic || '',
+          example: c.example || '', due: c.due || null, interval: c.interval || 0
+        });
+      }
+    }
+
+    const serverLog = {};
+    for (const l of (logData || [])) serverLog[l.date] = l.count;
+
+    const localCardCount  = Object.values(decks).reduce((s,d)=>s+d.cards.length,0);
+    const serverCardCount = Object.values(serverDecks).reduce((s,d)=>s+d.cards.length,0);
+
+    if (localCardCount > 0 && serverCardCount > 0 && localCardCount !== serverCardCount) {
+      const usServer = confirm(
+        `Máy này có ${localCardCount} thẻ, server có ${serverCardCount} thẻ.\n` +
+        `OK = Dùng dữ liệu từ server\nCancel = Giữ local & đẩy lên server`
+      );
+      if (!usServer) { await pushToSupabase(); return; }
+    }
+
+    decks = serverDecks;
+    studyLog = { ...studyLog, ...serverLog };
+    save(); localStorage.setItem('wf_log', JSON.stringify(studyLog));
+    renderLibrary();
+    const total = Object.values(decks).reduce((s,d)=>s+d.cards.length,0);
+    setSyncStatus('ok', '✓ đã sync');
+    toast(`☁ Tải từ server: ${Object.keys(decks).length} bộ thẻ, ${total} thẻ`);
+  } catch(err) {
+    setSyncStatus('err', '✗ lỗi tải');
+    console.error('Pull error:', err);
+    toast('Lỗi tải dữ liệu: ' + err.message, 'error');
+  }
+}
+
+async function manualSync() {
+  if (!sb) { showSetup(); return; }
+  await pullFromSupabase();
+}
+
+// ─── VIEWS ────────────────────────────────────────────
+const TABS = ['study','quiz','library','stats','import'];
+function switchView(name) {
+  document.querySelectorAll('.view').forEach(v=>v.classList.remove('active'));
+  document.querySelectorAll('.tab').forEach(t=>t.classList.remove('active'));
+  document.getElementById('view-'+name).classList.add('active');
+  document.querySelectorAll('.tab')[TABS.indexOf(name)].classList.add('active');
+  if (name==='library') renderLibrary();
+  if (name==='study')   renderStudy();
+  if (name==='stats')   renderStats();
+  if (name==='quiz' && !currentQuizDeckId) {
+    ['quiz-empty','quiz-content','quiz-done'].forEach((id,i)=>
+      document.getElementById(id).style.display = i===0?'flex':'none');
+  }
+  if (name==='import' && !rawData.length) document.getElementById('md-guide').style.display='block';
+}
+
+// ─── STUDY ────────────────────────────────────────────
+function startDeck(id) {
+  currentDeckId = id;
+  sessionStats = {again:0,hard:0,good:0,easy:0};
+  const now = Date.now();
+  studyQueue = decks[id].cards.map((c,i)=>({...c,_i:i}))
+    .filter(c=>!c.due||c.due<=now).sort(()=>Math.random()-0.5);
+  currentIdx=0; isFlipped=false;
+  switchView('study');
+}
+
+function renderStudy() {
+  const has = currentDeckId && decks[currentDeckId];
+  document.getElementById('study-empty').style.display   = has?'none':'flex';
+  document.getElementById('study-content').style.display = 'none';
+  document.getElementById('study-done').style.display    = 'none';
+  if (!has) return;
+  if (!studyQueue.length || currentIdx>=studyQueue.length) {
+    document.getElementById('study-done').style.display='flex';
+    const s=sessionStats, t=s.again+s.hard+s.good+s.easy;
+    document.getElementById('done-stats').textContent=`${t} thẻ · ✓ ${s.good+s.easy} nhớ · ✗ ${s.again} quên`;
+    if (sb && t > 0) setTimeout(pushToSupabase, 1000);
+    return;
+  }
+  document.getElementById('study-content').style.display='block';
+  document.getElementById('study-deck-name').textContent=decks[currentDeckId].name;
+  showCard();
+}
+
+function showCard() {
+  const c=studyQueue[currentIdx];
+  document.getElementById('card-front-word').textContent    = c.word||'—';
+  document.getElementById('card-front-phonetic').textContent= c.phonetic||'';
+  document.getElementById('card-back-meaning').textContent  = c.meaning||'—';
+  document.getElementById('card-back-example').textContent  = c.example||'';
+  document.getElementById('card-inner').classList.remove('flipped');
+  document.getElementById('rating-row').classList.remove('visible');
+  isFlipped=false;
+  const tot=studyQueue.length, done=currentIdx, pct=tot?Math.round(done/tot*100):0;
+  document.getElementById('progress-fill').style.width=pct+'%';
+  document.getElementById('progress-info').textContent=`${done}/${tot} · ${pct}%`;
+}
+
+function flipCard() {
+  isFlipped=!isFlipped;
+  document.getElementById('card-inner').classList.toggle('flipped',isFlipped);
+  if (isFlipped) setTimeout(()=>document.getElementById('rating-row').classList.add('visible'),300);
+  else document.getElementById('rating-row').classList.remove('visible');
+}
+
+function rate(level) {
+  const card=studyQueue[currentIdx];
+  sessionStats[['again','hard','good','easy'][level]]++;
+  const now=Date.now(), days=[0,1,3,7][level];
+  const real=decks[currentDeckId].cards[card._i];
+  real.due=level===0?now+60000:now+days*86400000; real.interval=days;
+  save(); logStudy();
+  if (level===0) studyQueue.push({...studyQueue[currentIdx]});
+  currentIdx++;
+  currentIdx>=studyQueue.length?renderStudy():showCard();
+}
+
+document.addEventListener('keydown', e=>{
+  if (!document.getElementById('view-study').classList.contains('active')) return;
+  if (e.code==='Space') { e.preventDefault(); flipCard(); }
+  if (isFlipped) { if(e.key==='1')rate(0);if(e.key==='2')rate(1);if(e.key==='3')rate(2);if(e.key==='4')rate(3); }
+});
+
+// ─── QUIZ ─────────────────────────────────────────────
+function startQuiz(id) {
+  if (!decks[id] || decks[id].cards.length < 4) { toast('Cần ít nhất 4 thẻ để thi','error'); return; }
+  currentQuizDeckId=id; quizIdx=0; quizCorrect=0; quizAnswered=false;
+  quizQueue=[...decks[id].cards].sort(()=>Math.random()-0.5);
+  ['quiz-empty','quiz-done'].forEach(i=>document.getElementById(i).style.display='none');
+  document.getElementById('quiz-content').style.display='block';
+  document.getElementById('quiz-deck-name').textContent=decks[id].name;
+  switchView('quiz'); showQuizCard();
+}
+
+function showQuizCard() {
+  const tot=quizQueue.length, pct=Math.round(quizIdx/tot*100);
+  document.getElementById('quiz-fill').style.width=pct+'%';
+  document.getElementById('quiz-progress').textContent=`${quizIdx}/${tot} · ✓${quizCorrect}`;
+  const card=quizQueue[quizIdx];
+  document.getElementById('quiz-q').textContent=card.word;
+  document.getElementById('quiz-ph').textContent=card.phonetic||'';
+  document.getElementById('quiz-fb').className='quiz-feedback';
+  document.getElementById('quiz-next-btn').style.display='none';
+  quizAnswered=false;
+  const wrongs=decks[currentQuizDeckId].cards
+    .filter(c=>c.meaning!==card.meaning).sort(()=>Math.random()-0.5).slice(0,3);
+  const opts=[...wrongs,card].sort(()=>Math.random()-0.5);
+  document.getElementById('quiz-opts').innerHTML=opts.map(o=>
+    `<button class="quiz-option" onclick="answerQuiz(this)" data-correct="${o.meaning===card.meaning}">${o.meaning}</button>`
+  ).join('');
+}
+
+function answerQuiz(btn) {
+  if (quizAnswered) return;
+  quizAnswered=true;
+  const ok=btn.dataset.correct==='true';
+  if (ok) quizCorrect++;
+  document.querySelectorAll('.quiz-option').forEach(b=>{
+    b.disabled=true;
+    if (b.dataset.correct==='true') b.classList.add('correct');
+    else if (b===btn&&!ok) b.classList.add('wrong');
+  });
+  const fb=document.getElementById('quiz-fb');
+  fb.textContent=ok?'✓ Chính xác!':'✗ Sai — đáp án đúng đã tô xanh';
+  fb.className='quiz-feedback '+(ok?'ok':'bad')+' show';
+  logStudy();
+  document.getElementById('quiz-next-btn').style.display='block';
+}
+
+function quizNext() {
+  quizIdx++;
+  if (quizIdx>=quizQueue.length) {
+    document.getElementById('quiz-content').style.display='none';
+    document.getElementById('quiz-done').style.display='flex';
+    const pct=Math.round(quizCorrect/quizQueue.length*100);
+    document.getElementById('quiz-emoji').textContent=pct>=80?'🏆':pct>=60?'👍':'📚';
+    document.getElementById('quiz-score-title').textContent=`${quizCorrect}/${quizQueue.length} đúng (${pct}%)`;
+    document.getElementById('quiz-score-sub').textContent=
+      pct>=80?'Xuất sắc!':pct>=60?'Khá tốt! Ôn lại những từ sai nhé.':'Cần ôn thêm — thử flashcard trước!';
+  } else showQuizCard();
+}
+
+// ─── LIBRARY ──────────────────────────────────────────
+function renderLibrary() {
+  const grid=document.getElementById('deck-grid'), ids=Object.keys(decks);
+  if (!ids.length) {
+    grid.innerHTML=`<div class="empty-state" style="padding:36px 0;grid-column:1/-1">
+      <div class="empty-icon">🗂</div>
+      <div class="empty-sub">Chưa có bộ thẻ nào. Import hoặc thêm thủ công!</div>
+    </div>`; return;
+  }
+  const now=Date.now();
+  grid.innerHTML=ids.map(id=>{
+    const d=decks[id], t=d.cards.length;
+    const due=d.cards.filter(c=>c.due&&c.due<=now).length;
+    const nw=d.cards.filter(c=>!c.due).length, rv=t-due-nw;
+    return `<div class="deck-card">
+      <div class="deck-card-name">${d.name}</div>
+      <div class="deck-card-count">${t} thẻ</div>
+      <div class="deck-card-stats">
+        ${nw?`<span class="stat-pill stat-new">${nw} mới</span>`:''}
+        ${due?`<span class="stat-pill stat-due">${due} đến hạn</span>`:''}
+        ${rv>0?`<span class="stat-pill stat-review">${rv} đã học</span>`:''}
+      </div>
+      <div class="deck-actions">
+        <button class="btn-sm" onclick="startDeck('${id}')">▶ Học</button>
+        <button class="btn-sm" onclick="startQuiz('${id}')">🎯 Thi</button>
+        <button class="btn-sm" onclick="openAddModal('${id}')">✎ Thêm</button>
+        <button class="btn-sm btn-sm-danger" onclick="deleteDeck('${id}')">Xoá</button>
+      </div>
+    </div>`;
+  }).join('');
+}
+
+function deleteDeck(id) {
+  if (!confirm(`Xoá bộ thẻ "${decks[id].name}"?`)) return;
+  if (sb) sb.from('cards').delete().eq('deck_id', id);
+  if (sb) sb.from('decks').delete().eq('id', id);
+  delete decks[id];
+  if (currentDeckId===id){currentDeckId=null;studyQueue=[];}
+  if (currentQuizDeckId===id) currentQuizDeckId=null;
+  save(); renderLibrary(); toast('Đã xoá bộ thẻ');
+}
+
+// ─── ADD MODAL ────────────────────────────────────────
+let rowId=0;
+function openAddModal(deckId=null) {
+  const sel=document.getElementById('modal-deck-sel');
+  sel.innerHTML='<option value="__new__">＋ Tạo bộ thẻ mới...</option>'+
+    Object.entries(decks).map(([id,d])=>`<option value="${id}"${id===deckId?' selected':''}>${d.name}</option>`).join('');
+  document.getElementById('modal-new-group').style.display=deckId?'none':'block';
+  document.getElementById('modal-new-name').value='';
+  document.getElementById('modal-card-list').innerHTML='';
+  addCardRow(); addCardRow();
+  document.getElementById('modal-overlay').classList.add('open');
+}
+function onDeckSelChange() {
+  document.getElementById('modal-new-group').style.display=
+    document.getElementById('modal-deck-sel').value==='__new__'?'block':'none';
+}
+function closeAddModal() { document.getElementById('modal-overlay').classList.remove('open'); }
+function addCardRow() {
+  const id=rowId++, row=document.createElement('div');
+  row.className='card-row'; row.id=`row-${id}`;
+  row.innerHTML=`
+    <input class="card-input" placeholder="Từ / Mặt trước" id="f-${id}">
+    <input class="card-input" placeholder="Nghĩa / Mặt sau" id="m-${id}">
+    <button class="remove-btn" onclick="this.closest('.card-row').remove()">×</button>
+    <input class="card-input phonetic-input" placeholder="Phiên âm (tùy chọn)" id="p-${id}">
+  `;
+  document.getElementById('modal-card-list').appendChild(row);
+  row.querySelector('input').focus();
+}
+function saveManualCards() {
+  let did=document.getElementById('modal-deck-sel').value;
+  if (did==='__new__') {
+    const dn=(document.getElementById('modal-new-name').value||'').trim();
+    if (!dn){toast('Vui lòng đặt tên bộ thẻ','error');return;}
+    did='deck_'+Date.now(); decks[did]={name:dn,cards:[]};
+  }
+  const cards=[];
+  document.querySelectorAll('#modal-card-list .card-row').forEach(row=>{
+    const id=row.id.replace('row-','');
+    const w=(document.getElementById('f-'+id)||{}).value?.trim();
+    const m=(document.getElementById('m-'+id)||{}).value?.trim();
+    const ph=(document.getElementById('p-'+id)||{}).value?.trim()||'';
+    if (w&&m) cards.push({word:w,meaning:m,phonetic:ph,example:'',due:null,interval:0});
+  });
+  if (!cards.length){toast('Chưa có thẻ nào hợp lệ','error');return;}
+  decks[did].cards.push(...cards); save(); closeAddModal(); renderLibrary();
+  if (sb) schedulePush();
+  toast(`Đã thêm ${cards.length} thẻ vào "${decks[did].name}"`);
+}
+document.getElementById('modal-overlay').addEventListener('click', function(e){ if(e.target===this) closeAddModal(); });
+
+// ─── STATS ────────────────────────────────────────────
+function renderStats() {
+  const now=Date.now(), all=Object.values(decks).flatMap(d=>d.cards);
+  const total=all.length, learned=all.filter(c=>c.due).length;
+  const due=all.filter(c=>c.due&&c.due<=now).length, nw=all.filter(c=>!c.due).length;
+  const today=new Date().toISOString().slice(0,10);
+  const todayCnt=studyLog[today]||0;
+  let streak=0; const tmp=new Date();
+  while(true){const k=tmp.toISOString().slice(0,10);if(studyLog[k]>0){streak++;tmp.setDate(tmp.getDate()-1);}else break;}
+  document.getElementById('stats-time').textContent='Cập nhật '+new Date().toLocaleTimeString('vi-VN')+(sb?' · ☁ Supabase sync':' · offline');
+  const sc=(v,l,s)=>`<div class="stat-card"><div class="stat-val">${v}</div><div class="stat-lbl">${l}</div><div class="stat-sub">${s}</div></div>`;
+  document.getElementById('stats-grid').innerHTML=
+    sc(total,'TỔNG THẺ',Object.keys(decks).length+' bộ')+
+    sc(todayCnt,'HÔM NAY','lượt ôn')+
+    sc(streak+'🔥','STREAK','ngày liên tiếp')+
+    sc(learned,'ĐÃ HỌC',total?Math.round(learned/total*100)+'%':'0%')+
+    `<div class="stat-card"><div class="stat-val" style="color:var(--rose)">${due}</div><div class="stat-lbl">ĐẾN HẠN</div><div class="stat-sub">cần ôn hôm nay</div></div>`+
+    `<div class="stat-card"><div class="stat-val" style="color:var(--sage)">${nw}</div><div class="stat-lbl">THẺ MỚI</div><div class="stat-sub">chưa học</div></div>`;
+  const maxLog=Math.max(...Object.values(studyLog),1);
+  const hmCells=[];
+  for(let i=27;i>=0;i--){const d=new Date();d.setDate(d.getDate()-i);const k=d.toISOString().slice(0,10),cnt=studyLog[k]||0;const lv=cnt===0?0:Math.min(4,Math.ceil(cnt/maxLog*4));hmCells.push(`<div class="hm-cell" data-lv="${lv}" title="${k}: ${cnt} thẻ"></div>`);}
+  const brow=(l,v,t,cls)=>`<div class="bar-row"><div class="bar-label">${l}</div><div class="bar-track"><div class="bar-fill ${cls}" style="width:${t?Math.round(v/t*100):0}%"></div></div><div class="bar-count">${v}</div></div>`;
+  const deckBars=Object.entries(decks).map(([id,d])=>{
+    const t=d.cards.length,due2=d.cards.filter(c=>c.due&&c.due<=now).length,nw2=d.cards.filter(c=>!c.due).length,rv=t-due2-nw2;
+    return `<div class="stats-section-title">${d.name} <span style="font-weight:300;opacity:0.45">(${t})</span></div>${brow('Mới',nw2,t,'fill-new')}${brow('Hạn',due2,t,'fill-due')}${brow('Xong',rv,t,'fill-review')}`;
+  }).join('<div style="height:12px"></div>');
+  document.getElementById('stats-body').innerHTML=Object.keys(decks).length?
+    `<div class="stats-section">${deckBars}</div>
+     <div class="stats-section" style="margin-top:26px">
+       <div class="stats-section-title">Hoạt động 28 ngày qua</div>
+       <div class="heatmap">${hmCells.join('')}</div>
+       <div style="font-family:'DM Mono',monospace;font-size:0.66rem;color:var(--muted);margin-top:7px">← 28 ngày trước · Hôm nay →</div>
+     </div>`:'';
+}
+
+// ─── IMPORT ───────────────────────────────────────────
+const dz=document.getElementById('dropzone');
+dz.addEventListener('dragover',e=>{e.preventDefault();dz.classList.add('drag-over');});
+dz.addEventListener('dragleave',()=>dz.classList.remove('drag-over'));
+dz.addEventListener('drop',e=>{e.preventDefault();dz.classList.remove('drag-over');if(e.dataTransfer.files[0])handleFile(e.dataTransfer.files[0]);});
+
+function handleFile(file) {
+  if (!file) return;
+  const ext=file.name.split('.').pop().toLowerCase(), fr=new FileReader();
+  if (ext==='md'||ext==='markdown') {
+    fr.onload=e=>{
+      try {
+        const cards=parseMarkdown(e.target.result);
+        if (!cards.length){toast('Không tìm thấy dữ liệu','error');return;}
+        rawData=[['word','meaning','phonetic','example'],...cards.map(c=>[c.word,c.meaning,c.phonetic||'',c.example||''])];
+        columns=[{label:'word',idx:0},{label:'meaning',idx:1},{label:'phonetic',idx:2},{label:'example',idx:3}];
+        populateColSelects(); renderPreview();
+        document.getElementById('deck-name-input').value=file.name.replace(/\.[^.]+$/,'');
+        document.getElementById('import-form').style.display='flex';
+        document.getElementById('md-guide').style.display='none';
+        toast(`Đọc được ${cards.length} thẻ`);
+      } catch(err){toast('Lỗi: '+err.message,'error');}
+    };
+    fr.readAsText(file,'UTF-8'); return;
+  }
+  fr.onload=e=>{
+    try {
+      const wb=ext==='csv'?XLSX.read(e.target.result,{type:'string'}):XLSX.read(new Uint8Array(e.target.result),{type:'array'});
+      const sheet=wb.Sheets[wb.SheetNames[0]];
+      rawData=XLSX.utils.sheet_to_json(sheet,{header:1,defval:''});
+      if (rawData.length<2){toast('File trống','error');return;}
+      columns=rawData[0].map((h,i)=>({label:h||`Cột ${i+1}`,idx:i}));
+      populateColSelects(); renderPreview();
+      document.getElementById('deck-name-input').value=file.name.replace(/\.[^.]+$/,'');
+      document.getElementById('import-form').style.display='flex';
+      document.getElementById('md-guide').style.display='none';
+      toast(`Đọc được ${rawData.length-1} dòng`);
+    } catch(err){toast('Lỗi: '+err.message,'error');}
+  };
+  if (ext==='csv') fr.readAsText(file,'UTF-8'); else fr.readAsArrayBuffer(file);
+}
+
+function parseMarkdown(text) {
+  const lines=text.split('\n'), all=[];
+  for (const line of lines) {
+    const m=line.match(/^\d+\.\s+(.+)$/); if(!m) continue;
+    const content=m[1].trim();
+    if (/^(?:Front|Back)\s*:/i.test(content)) continue;
+    const sep=content.indexOf(': ');
+    if (sep>0&&sep<content.length-2) {
+      const front=content.slice(0,sep).trim(), back=content.slice(sep+2).trim();
+      if (front&&back){const ph=back.match(/\/[^/]+\//);all.push({word:front,meaning:ph?back.replace(ph[0],'').trim().replace(/^[,\s]+/,''):back,phonetic:ph?ph[0]:'',example:''});}
+    }
+  }
+  let i=0;
+  while(i<lines.length){
+    const fm=lines[i].trim().match(/^Front\s*:\s*(.*)$/i);
+    if(fm){
+      const fl=[fm[1].trim()];let j=i+1;
+      while(j<lines.length&&!/^Back\s*:/i.test(lines[j].trim())){if(lines[j].trim())fl.push(lines[j].trim());j++;}
+      const bm=j<lines.length?lines[j].trim().match(/^Back\s*:\s*(.*)$/i):null;
+      if(bm){
+        const bl=[bm[1].trim()];let k=j+1;
+        while(k<lines.length&&!/^Front\s*:/i.test(lines[k].trim())){if(/^\d+\.\s*$/.test(lines[k].trim()))break;if(lines[k].trim())bl.push(lines[k].trim());k++;}
+        const ft=fl.filter(Boolean).join(' ').trim(),bt=bl.filter(Boolean).join(' ').trim();
+        if(ft&&bt){const ph=bt.match(/\/[^/]+\//);all.push({word:ft.length>120?ft.slice(0,117)+'…':ft,meaning:ph?bt.replace(ph[0],'').trim():bt,phonetic:ph?ph[0]:'',example:''});}
+        i=k;continue;
+      }
+    }
+    i++;
+  }
+  if(all.length) return all;
+  const tl=lines.filter(l=>l.trim().startsWith('|'));
+  if(tl.length>=2){
+    let hi=-1;
+    for(let ti=0;ti<tl.length-1;ti++) if(/^\|[-| :]+\|$/.test(tl[ti+1].trim())){hi=ti;break;}
+    if(hi>=0){
+      const pr=row=>row.split('|').map(c=>c.trim()).filter((_,idx,a)=>idx>0&&idx<a.length-1);
+      const hd=pr(tl[hi]).map(h=>h.toLowerCase());
+      const fc=hints=>{for(const h of hints){const idx=hd.findIndex(hh=>hh.includes(h));if(idx>=0)return idx;}return -1;};
+      const wC=Math.max(0,fc(['word','từ','term','front']));
+      const mC=Math.max(0,fc(['meaning','nghĩa','definition','answer','back']));
+      const pc=fc(['phonetic','phiên','pronunciation']);
+      return tl.slice(hi+2).map(row=>{const c=pr(row);if(!c[wC])return null;return{word:c[wC],meaning:c[mC]||'',phonetic:pc>=0?(c[pc]||''):'',example:''};}).filter(Boolean);
+    }
+  }
+  return lines.map(l=>{const ct=l.trim().replace(/^[-*+]\s+/,'');if(ct===l.trim())return null;const p=ct.split(/\s*(?:::|—|→|\|)\s*/);if(p.length<2)return null;return{word:p[0].trim(),meaning:p[1].trim(),phonetic:p[2]||'',example:''};}).filter(Boolean);
+}
+
+function populateColSelects() {
+  ['col-word','col-meaning','col-phonetic','col-example'].forEach((id,i)=>{
+    const sel=document.getElementById(id);
+    sel.innerHTML=(i>=2?'<option value="">— bỏ qua —</option>':'')+columns.map(c=>`<option value="${c.idx}">${c.label}</option>`).join('');
+    if(i<2) sel.value=i;
+  });
+  const cn=columns.map(c=>c.label.toLowerCase());
+  const det=hints=>{for(const h of hints){const idx=cn.findIndex(n=>n.includes(h));if(idx>=0)return idx;}return null;};
+  const wi=det(['word','từ','term','front']);if(wi!=null)document.getElementById('col-word').value=wi;
+  const mi=det(['meaning','nghĩa','definition','answer','back']);if(mi!=null)document.getElementById('col-meaning').value=mi;
+}
+function renderPreview() {
+  document.getElementById('preview-area').innerHTML=`<table class="preview-table"><thead><tr>${columns.map(c=>`<th>${c.label}</th>`).join('')}</tr></thead><tbody>${rawData.slice(1,6).map(r=>`<tr>${columns.map((_,i)=>`<td>${r[i]||''}</td>`).join('')}</tr>`).join('')}</tbody></table>`;
+}
+function importDeck() {
+  const name=(document.getElementById('deck-name-input').value||'').trim();
+  if(!name){toast('Vui lòng đặt tên bộ thẻ','error');return;}
+  const wI=parseInt(document.getElementById('col-word').value);
+  const mI=parseInt(document.getElementById('col-meaning').value);
+  const pI=document.getElementById('col-phonetic').value;
+  const eI=document.getElementById('col-example').value;
+  const cards=rawData.slice(1).filter(r=>r[wI]||r[mI]).map(r=>({
+    word:String(r[wI]||'').trim(),meaning:String(r[mI]||'').trim(),
+    phonetic:pI?String(r[parseInt(pI)]||'').trim():'',
+    example:eI?String(r[parseInt(eI)]||'').trim():'',
+    due:null,interval:0
+  }));
+  if(!cards.length){toast('Không có dữ liệu hợp lệ','error');return;}
+  const id='deck_'+Date.now();
+  decks[id]={name,cards}; save();
+  rawData=[]; columns=[];
+  document.getElementById('import-form').style.display='none';
+  document.getElementById('file-input').value='';
+  if (sb) schedulePush();
+  toast(`✓ Đã tạo "${name}" — ${cards.length} thẻ`);
+  setTimeout(()=>startDeck(id),800);
+}
+
+// ─── TOAST ────────────────────────────────────────────
+let tt;
+function toast(msg, type='success') {
+  const el=document.getElementById('toast');
+  el.textContent=msg; el.className='toast '+type+' show';
+  clearTimeout(tt); tt=setTimeout(()=>el.classList.remove('show'),3500);
+}
+
+// ─── INIT ─────────────────────────────────────────────
+renderLibrary();
+if (Object.keys(decks).length>0) switchView('library');
+else document.getElementById('md-guide').style.display='block';
+
+// Khởi tạo Supabase nếu đã có credentials
+if (CONFIG.SUPABASE_URL && CONFIG.SUPABASE_KEY) {
+  initSupabase(CONFIG.SUPABASE_URL, CONFIG.SUPABASE_KEY);
+  // Tự động pull khi mở app
+  pullFromSupabase();
+} else {
+  // Lần đầu chưa setup — hiện màn hình cài đặt
+  setTimeout(() => document.getElementById('setup-screen').style.display = 'flex', 400);
+}
+</script>
+</body>
+</html>
