@@ -7,13 +7,13 @@
 <link href="https://fonts.googleapis.com/css2?family=Fraunces:ital,wght@0,300;0,400;0,600;1,300&family=DM+Mono:wght@300;400&display=swap" rel="stylesheet">
 <script src="https://cdnjs.cloudflare.com/ajax/libs/xlsx/0.18.5/xlsx.full.min.js"></script>
 <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2/dist/umd/supabase.min.js"></script>
-<script src="https://cdnjs.cloudflare.com/ajax/libs/mammoth/1.6.0/mammoth.browser.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/jszip/3.10.1/jszip.min.js"></script>
 <style>
   :root {
     --ink: #1a2a4a; --falcon: #f47320; --falcon-dark: #d45e00;
     --paper: #fff; --cream: #fff3eb; --gold-light: #ffc09a;
     --sage: #2e7d52; --rose: #c0392b; --muted: #7a4a20;
-    --card-w: 520px; --card-h: 300px;
+    --card-w: 620px; --card-h: 380px;
   }
   * { box-sizing: border-box; margin: 0; padding: 0; }
   body {
@@ -83,11 +83,11 @@
   .card-scene { width: var(--card-w); height: var(--card-h); perspective: 1200px; cursor: pointer; }
   .card-inner { width: 100%; height: 100%; position: relative; transform-style: preserve-3d; transition: transform 0.6s cubic-bezier(0.4,0,0.2,1); }
   .card-inner.flipped { transform: rotateY(180deg); }
-  .card-face { position: absolute; inset: 0; backface-visibility: hidden; -webkit-backface-visibility: hidden; border-radius: 20px; display: flex; flex-direction: column; align-items: center; justify-content: center; padding: 28px 32px; gap: 10px; box-shadow: 0 4px 6px rgba(0,0,0,0.04), 0 18px 36px rgba(0,0,0,0.08); overflow: hidden; }
+  .card-face { position: absolute; inset: 0; backface-visibility: hidden; -webkit-backface-visibility: hidden; border-radius: 20px; display: flex; flex-direction: column; align-items: center; justify-content: center; padding: 22px 28px; gap: 8px; box-shadow: 0 4px 6px rgba(0,0,0,0.04), 0 18px 36px rgba(0,0,0,0.08); overflow: hidden; }
   .card-front { background: #fff; border: 1px solid rgba(26,26,46,0.08); }
   .card-back { background: var(--ink); color: #fff; transform: rotateY(180deg); }
   .card-label { font-family: 'DM Mono', monospace; font-size: 0.67rem; letter-spacing: 0.12em; text-transform: uppercase; opacity: 0.35; }
-  .card-word { font-size: 2.1rem; font-weight: 300; letter-spacing: -0.02em; text-align: center; line-height: 1.3; overflow-wrap: break-word; word-break: break-word; }
+  .card-word { font-size: 2.1rem; font-weight: 300; letter-spacing: -0.02em; text-align: center; line-height: 1.35; overflow-wrap: break-word; word-break: break-word; max-width: 100%; }
   .card-phonetic { font-family: 'DM Mono', monospace; font-size: 0.8rem; color: var(--muted); }
   .card-back .card-phonetic { color: #ffa060; }
   .card-example { font-size: 0.8rem; font-family: 'DM Mono', monospace; color: rgba(255,255,255,0.42); text-align: center; max-width: 360px; line-height: 1.6; }
@@ -215,7 +215,7 @@
   .toast.error::before   { content: '✕ '; color: #eb5757; }
 
   @media (max-width: 640px) {
-    :root { --card-w: 100%; --card-h: 260px; }
+    :root { --card-w: 100%; --card-h: 320px; }
     main { padding: 12px 14px; }
     header { padding: 11px 14px; }
     .view.active { padding: 18px; }
@@ -700,16 +700,23 @@ function autoResizeCardText() {
     if (!el) return;
     const parent = el.closest('.card-face');
     if (!parent) return;
-    // Reset
-    el.style.fontSize = '';
-    // Available height = card height - padding - other elements
-    const maxH = parent.clientHeight - 80;
-    let size = 2.1; // rem
-    el.style.fontSize = size + 'rem';
-    // Shrink until fits
-    while (el.scrollHeight > maxH && size > 0.7) {
-      size = Math.round((size - 0.08) * 100) / 100;
+
+    // Reset to base size
+    el.style.fontSize = '2.1rem';
+    el.style.lineHeight = '1.35';
+
+    // Measure available space: card height minus padding (44px top+bottom) and sibling elements
+    const siblings = Array.from(parent.children).filter(ch => ch !== el);
+    const sibH = siblings.reduce((s, ch) => s + ch.offsetHeight + 8, 0);
+    const available = parent.clientHeight - 44 - sibH;
+
+    // Shrink font until text fits
+    let size = 2.1;
+    while (el.scrollHeight > available && size > 0.65) {
+      size = Math.round((size - 0.06) * 100) / 100;
       el.style.fontSize = size + 'rem';
+      // Tighten line-height for small text
+      el.style.lineHeight = size < 1.2 ? '1.4' : '1.35';
     }
   });
 }
@@ -971,34 +978,20 @@ function handleFile(file) {
   if (ext==='docx') {
     fr.onload = async e => {
       try {
-        const result = await mammoth.extractRawText({ arrayBuffer: e.target.result });
-        const decksFromDocx = parseDocx(result.value);
-        if (!decksFromDocx.length) { toast('Không tìm thấy dữ liệu trong file .docx','error'); return; }
-
-        // If multiple decks — import all at once
-        if (decksFromDocx.length > 1) {
-          let imported = 0;
-          for (const dk of decksFromDocx) {
-            if (!dk.cards.length) continue;
-            const id = 'deck_' + Date.now() + '_' + Math.random().toString(36).slice(2,6);
-            decks[id] = { name: dk.name, cards: dk.cards };
-            imported++;
-          }
-          save();
-          if (sb) schedulePush();
-          renderLibrary(); switchView('library');
-          toast(`✓ Đã import ${imported} bộ thẻ từ .docx`);
-        } else {
-          // Single deck — go through normal preview flow
-          const dk = decksFromDocx[0];
-          rawData = [['word','meaning','phonetic','example'], ...dk.cards.map(c=>[c.word,c.meaning,c.phonetic||'',c.example||''])];
-          columns = [{label:'word',idx:0},{label:'meaning',idx:1},{label:'phonetic',idx:2},{label:'example',idx:3}];
-          populateColSelects(); renderPreview();
-          document.getElementById('deck-name-input').value = dk.name || file.name.replace(/\.[^.]+$/,'');
-          document.getElementById('import-form').style.display='flex';
-          document.getElementById('md-guide').style.display='none';
-          toast(`Đọc được ${dk.cards.length} thẻ`);
+        const deckList = await parseDocxXml(e.target.result);
+        if (!deckList.length) { toast('Không tìm thấy dữ liệu trong file .docx','error'); return; }
+        let imported = 0;
+        for (const dk of deckList) {
+          if (!dk.cards.length) continue;
+          const id = 'deck_' + Date.now() + '_' + Math.random().toString(36).slice(2,6);
+          decks[id] = { name: dk.name, cards: dk.cards };
+          imported++;
         }
+        save();
+        if (sb) schedulePush();
+        renderLibrary(); switchView('library');
+        const total = deckList.reduce((s,d)=>s+d.cards.length,0);
+        toast(`✓ Đã import ${imported} bộ thẻ, ${total} thẻ từ .docx`);
       } catch(err) { toast('Lỗi đọc .docx: '+err.message,'error'); console.error(err); }
     };
     fr.readAsArrayBuffer(file); return;
@@ -1037,46 +1030,80 @@ function handleFile(file) {
   if (ext==='csv') fr.readAsText(file,'UTF-8'); else fr.readAsArrayBuffer(file);
 }
 
-function parseDocx(text) {
-  // mammoth extracts raw text; headings become lines then content follows
-  // Structure: deck name line (P1, P2, O1...) followed by "word: meaning" lines
-  const lines = text.split('\n').map(l => l.trim()).filter(Boolean);
-  const deckPattern = /^([A-Z]\d+)$/;  // P1, O2, W3, C4 etc
-  const result = [];
+async function parseDocxXml(arrayBuffer) {
+  const zip = await JSZip.loadAsync(arrayBuffer);
+  const xmlStr = await zip.file('word/document.xml').async('string');
+  const parser = new DOMParser();
+  const doc = parser.parseFromString(xmlStr, 'application/xml');
+  const W = 'http://schemas.openxmlformats.org/wordprocessingml/2006/main';
+
+  function getText(el) {
+    return Array.from(el.getElementsByTagNameNS(W,'t')).map(t=>t.textContent||'').join('').trim();
+  }
+  function getStyle(p) {
+    const s = p.querySelector ? p.getElementsByTagNameNS(W,'pStyle')[0] : null;
+    return s ? s.getAttributeNS(W,'val') : 'Normal';
+  }
+  function getCellLines(tc) {
+    return Array.from(tc.getElementsByTagNameNS(W,'p'))
+      .map(p => getText(p)).filter(Boolean);
+  }
+
+  const body = doc.getElementsByTagNameNS(W,'body')[0];
+  const decks = [];
   let current = null;
 
-  for (const line of lines) {
-    // Check if line is a deck title (e.g. P1, O2, C10)
-    if (deckPattern.test(line)) {
-      if (current && current.cards.length) result.push(current);
-      current = { name: line, cards: [] };
-      continue;
+  for (const child of body.childNodes) {
+    const localName = child.localName;
+
+    if (localName === 'p') {
+      const style = getStyle(child);
+      const text = getText(child);
+      if (!text) continue;
+
+      // Title style = new deck
+      if (style === 'Title') {
+        if (current && current.cards.length) decks.push(current);
+        current = { name: text, cards: [] };
+        continue;
+      }
+      if (!current) current = { name: 'Import', cards: [] };
+
+      // Skip quiz lines
+      if (/^(?:Front|Back)\s*:/i.test(text)) continue;
+
+      // Parse "word: meaning" lines (including numbered "1. word: meaning")
+      const numbered = text.match(/^\d+\.\s+(.+)$/);
+      const content = numbered ? numbered[1] : text;
+      const sep = content.indexOf(': ');
+      if (sep > 0 && sep < content.length - 2) {
+        const word = content.slice(0, sep).trim();
+        const rest = content.slice(sep + 2).trim();
+        const ph = rest.match(/\/[^\/]+\//);
+        const meaning = ph ? rest.replace(ph[0],'').trim().replace(/^[,\s]+/,'') : rest;
+        if (word && meaning) {
+          current.cards.push({ word, meaning, phonetic: ph?ph[0]:'', example:'', due:null, interval:0 });
+        }
+      }
     }
-    if (!current) { current = { name: 'Import', cards: [] }; }
 
-    // Skip quiz lines (Front:/Back: format)
-    if (/^(?:Front|Back)\s*:/i.test(line)) continue;
-    // Skip lines that are just numbers (quiz separators)
-    if (/^\d+\.\s*$/.test(line)) continue;
-
-    // Parse "word: meaning" or "word - meaning"
-    // Handle numbered lines: "1. word: meaning"
-    const numbered = line.match(/^\d+\.\s+(.+)$/);
-    const content = numbered ? numbered[1] : line;
-
-    const sepIdx = content.indexOf(': ');
-    if (sepIdx > 0 && sepIdx < content.length - 2) {
-      const word = content.slice(0, sepIdx).trim();
-      const rest = content.slice(sepIdx + 2).trim();
-      const ph = rest.match(/\/[^\/]+\//);
-      const meaning = ph ? rest.replace(ph[0], '').trim().replace(/^[,\s]+/, '') : rest;
-      if (word && meaning) {
-        current.cards.push({ word, meaning, phonetic: ph ? ph[0] : '', example: '', due: null, interval: 0 });
+    else if (localName === 'tbl') {
+      if (!current) current = { name: 'Import', cards: [] };
+      const rows = child.getElementsByTagNameNS(W,'tr');
+      for (const row of rows) {
+        const tcs = row.getElementsByTagNameNS(W,'tc');
+        if (tcs.length < 2) continue;
+        // Front = all lines in col 0 joined; Back = all lines in col 1 joined
+        const front = getCellLines(tcs[0]).join(' | ').trim();
+        const back  = getCellLines(tcs[1]).join(' | ').trim();
+        if (front && back) {
+          current.cards.push({ word: front, meaning: back, phonetic:'', example:'', due:null, interval:0 });
+        }
       }
     }
   }
-  if (current && current.cards.length) result.push(current);
-  return result;
+  if (current && current.cards.length) decks.push(current);
+  return decks;
 }
 
 function parseMarkdown(text) {
