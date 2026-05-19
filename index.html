@@ -7,6 +7,7 @@
 <link href="https://fonts.googleapis.com/css2?family=Fraunces:ital,wght@0,300;0,400;0,600;1,300&family=DM+Mono:wght@300;400&display=swap" rel="stylesheet">
 <script src="https://cdnjs.cloudflare.com/ajax/libs/xlsx/0.18.5/xlsx.full.min.js"></script>
 <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2/dist/umd/supabase.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/mammoth/1.6.0/mammoth.browser.min.js"></script>
 <style>
   :root {
     --ink: #1a2a4a; --falcon: #f47320; --falcon-dark: #d45e00;
@@ -383,12 +384,12 @@
 <div class="view" id="view-import">
   <div class="import-wrap">
     <div class="sec-title">Import từ file</div>
-    <div class="sec-sub" style="margin-bottom:22px">Hỗ trợ .xlsx · .xls · .csv · .md</div>
+    <div class="sec-sub" style="margin-bottom:22px">Hỗ trợ .xlsx · .xls · .csv · .md · .docx</div>
     <div class="dropzone" id="dropzone" onclick="document.getElementById('file-input').click()">
       <div class="drop-icon">📂</div>
       <div class="drop-title">Kéo thả hoặc nhấp để chọn file</div>
-      <div class="drop-sub">.xlsx / .xls / .csv / .md</div>
-      <input type="file" id="file-input" accept=".xlsx,.xls,.csv,.md,.markdown" style="display:none" onchange="handleFile(this.files[0])">
+      <div class="drop-sub">.xlsx / .xls / .csv / .md / .docx</div>
+      <input type="file" id="file-input" accept=".xlsx,.xls,.csv,.md,.markdown,.docx" style="display:none" onchange="handleFile(this.files[0])">
     </div>
     <div class="import-form" id="import-form" style="display:none">
       <div class="form-group">
@@ -967,6 +968,42 @@ dz.addEventListener('drop',e=>{e.preventDefault();dz.classList.remove('drag-over
 function handleFile(file) {
   if (!file) return;
   const ext=file.name.split('.').pop().toLowerCase(), fr=new FileReader();
+  if (ext==='docx') {
+    fr.onload = async e => {
+      try {
+        const result = await mammoth.extractRawText({ arrayBuffer: e.target.result });
+        const decksFromDocx = parseDocx(result.value);
+        if (!decksFromDocx.length) { toast('Không tìm thấy dữ liệu trong file .docx','error'); return; }
+
+        // If multiple decks — import all at once
+        if (decksFromDocx.length > 1) {
+          let imported = 0;
+          for (const dk of decksFromDocx) {
+            if (!dk.cards.length) continue;
+            const id = 'deck_' + Date.now() + '_' + Math.random().toString(36).slice(2,6);
+            decks[id] = { name: dk.name, cards: dk.cards };
+            imported++;
+          }
+          save();
+          if (sb) schedulePush();
+          renderLibrary(); switchView('library');
+          toast(`✓ Đã import ${imported} bộ thẻ từ .docx`);
+        } else {
+          // Single deck — go through normal preview flow
+          const dk = decksFromDocx[0];
+          rawData = [['word','meaning','phonetic','example'], ...dk.cards.map(c=>[c.word,c.meaning,c.phonetic||'',c.example||''])];
+          columns = [{label:'word',idx:0},{label:'meaning',idx:1},{label:'phonetic',idx:2},{label:'example',idx:3}];
+          populateColSelects(); renderPreview();
+          document.getElementById('deck-name-input').value = dk.name || file.name.replace(/\.[^.]+$/,'');
+          document.getElementById('import-form').style.display='flex';
+          document.getElementById('md-guide').style.display='none';
+          toast(`Đọc được ${dk.cards.length} thẻ`);
+        }
+      } catch(err) { toast('Lỗi đọc .docx: '+err.message,'error'); console.error(err); }
+    };
+    fr.readAsArrayBuffer(file); return;
+  }
+
   if (ext==='md'||ext==='markdown') {
     fr.onload=e=>{
       try {
@@ -998,6 +1035,48 @@ function handleFile(file) {
     } catch(err){toast('Lỗi: '+err.message,'error');}
   };
   if (ext==='csv') fr.readAsText(file,'UTF-8'); else fr.readAsArrayBuffer(file);
+}
+
+function parseDocx(text) {
+  // mammoth extracts raw text; headings become lines then content follows
+  // Structure: deck name line (P1, P2, O1...) followed by "word: meaning" lines
+  const lines = text.split('\n').map(l => l.trim()).filter(Boolean);
+  const deckPattern = /^([A-Z]\d+)$/;  // P1, O2, W3, C4 etc
+  const result = [];
+  let current = null;
+
+  for (const line of lines) {
+    // Check if line is a deck title (e.g. P1, O2, C10)
+    if (deckPattern.test(line)) {
+      if (current && current.cards.length) result.push(current);
+      current = { name: line, cards: [] };
+      continue;
+    }
+    if (!current) { current = { name: 'Import', cards: [] }; }
+
+    // Skip quiz lines (Front:/Back: format)
+    if (/^(?:Front|Back)\s*:/i.test(line)) continue;
+    // Skip lines that are just numbers (quiz separators)
+    if (/^\d+\.\s*$/.test(line)) continue;
+
+    // Parse "word: meaning" or "word - meaning"
+    // Handle numbered lines: "1. word: meaning"
+    const numbered = line.match(/^\d+\.\s+(.+)$/);
+    const content = numbered ? numbered[1] : line;
+
+    const sepIdx = content.indexOf(': ');
+    if (sepIdx > 0 && sepIdx < content.length - 2) {
+      const word = content.slice(0, sepIdx).trim();
+      const rest = content.slice(sepIdx + 2).trim();
+      const ph = rest.match(/\/[^\/]+\//);
+      const meaning = ph ? rest.replace(ph[0], '').trim().replace(/^[,\s]+/, '') : rest;
+      if (word && meaning) {
+        current.cards.push({ word, meaning, phonetic: ph ? ph[0] : '', example: '', due: null, interval: 0 });
+      }
+    }
+  }
+  if (current && current.cards.length) result.push(current);
+  return result;
 }
 
 function parseMarkdown(text) {
