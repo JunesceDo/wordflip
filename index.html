@@ -82,11 +82,11 @@
   .card-scene { width: var(--card-w); height: var(--card-h); perspective: 1200px; cursor: pointer; }
   .card-inner { width: 100%; height: 100%; position: relative; transform-style: preserve-3d; transition: transform 0.6s cubic-bezier(0.4,0,0.2,1); }
   .card-inner.flipped { transform: rotateY(180deg); }
-  .card-face { position: absolute; inset: 0; backface-visibility: hidden; -webkit-backface-visibility: hidden; border-radius: 20px; display: flex; flex-direction: column; align-items: center; justify-content: center; padding: 38px; gap: 11px; box-shadow: 0 4px 6px rgba(0,0,0,0.04), 0 18px 36px rgba(0,0,0,0.08); }
+  .card-face { position: absolute; inset: 0; backface-visibility: hidden; -webkit-backface-visibility: hidden; border-radius: 20px; display: flex; flex-direction: column; align-items: center; justify-content: center; padding: 28px 32px; gap: 10px; box-shadow: 0 4px 6px rgba(0,0,0,0.04), 0 18px 36px rgba(0,0,0,0.08); overflow: hidden; }
   .card-front { background: #fff; border: 1px solid rgba(26,26,46,0.08); }
   .card-back { background: var(--ink); color: #fff; transform: rotateY(180deg); }
   .card-label { font-family: 'DM Mono', monospace; font-size: 0.67rem; letter-spacing: 0.12em; text-transform: uppercase; opacity: 0.35; }
-  .card-word { font-size: 2.1rem; font-weight: 300; letter-spacing: -0.02em; text-align: center; line-height: 1.2; }
+  .card-word { font-size: 2.1rem; font-weight: 300; letter-spacing: -0.02em; text-align: center; line-height: 1.3; overflow-wrap: break-word; word-break: break-word; }
   .card-phonetic { font-family: 'DM Mono', monospace; font-size: 0.8rem; color: var(--muted); }
   .card-back .card-phonetic { color: #ffa060; }
   .card-example { font-size: 0.8rem; font-family: 'DM Mono', monospace; color: rgba(255,255,255,0.42); text-align: center; max-width: 360px; line-height: 1.6; }
@@ -693,6 +693,26 @@ function startDeck(id) {
   switchView('study');
 }
 
+function autoResizeCardText() {
+  ['card-front-word','card-back-meaning'].forEach(id => {
+    const el = document.getElementById(id);
+    if (!el) return;
+    const parent = el.closest('.card-face');
+    if (!parent) return;
+    // Reset
+    el.style.fontSize = '';
+    // Available height = card height - padding - other elements
+    const maxH = parent.clientHeight - 80;
+    let size = 2.1; // rem
+    el.style.fontSize = size + 'rem';
+    // Shrink until fits
+    while (el.scrollHeight > maxH && size > 0.7) {
+      size = Math.round((size - 0.08) * 100) / 100;
+      el.style.fontSize = size + 'rem';
+    }
+  });
+}
+
 function renderStudy() {
   const has = currentDeckId && decks[currentDeckId];
   document.getElementById('study-empty').style.display   = has?'none':'flex';
@@ -720,6 +740,7 @@ function showCard() {
   document.getElementById('card-inner').classList.remove('flipped');
   document.getElementById('rating-row').classList.remove('visible');
   isFlipped=false;
+  requestAnimationFrame(autoResizeCardText);
   const tot=studyQueue.length, done=currentIdx, pct=tot?Math.round(done/tot*100):0;
   document.getElementById('progress-fill').style.width=pct+'%';
   document.getElementById('progress-info').textContent=`${done}/${tot} · ${pct}%`;
