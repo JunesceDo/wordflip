@@ -639,21 +639,30 @@ async function pullFromSupabase() {
     const localCardCount  = Object.values(decks).reduce((s,d)=>s+d.cards.length,0);
     const serverCardCount = Object.values(serverDecks).reduce((s,d)=>s+d.cards.length,0);
 
-    if (localCardCount > 0 && serverCardCount > 0 && localCardCount !== serverCardCount) {
-      const usServer = confirm(
-        `Máy này có ${localCardCount} thẻ, server có ${serverCardCount} thẻ.\n` +
-        `OK = Dùng dữ liệu từ server\nCancel = Giữ local & đẩy lên server`
-      );
-      if (!usServer) { await pushToSupabase(); return; }
+    // Local luôn thắng nếu có nhiều thẻ hơn — push lên server rồi dùng local
+    if (localCardCount > serverCardCount) {
+      setSyncStatus('ok', '✓ đồng bộ');
+      toast(`☁ Local (${localCardCount}) > Server (${serverCardCount}) — đang đẩy lên...`);
+      await pushToSupabase();
+      return;
     }
 
-    decks = serverDecks;
+    // Server có nhiều hơn hoặc bằng — merge: giữ local-only decks + lấy server decks
+    const merged = { ...decks };
+    for (const [id, d] of Object.entries(serverDecks)) {
+      // Nếu deck này server có nhiều thẻ hơn local → dùng server
+      const localDeck = decks[id];
+      if (!localDeck || d.cards.length >= localDeck.cards.length) {
+        merged[id] = d;
+      }
+    }
+    decks = merged;
     studyLog = { ...studyLog, ...serverLog };
     save(); localStorage.setItem('wf_log', JSON.stringify(studyLog));
     renderLibrary();
     const total = Object.values(decks).reduce((s,d)=>s+d.cards.length,0);
     setSyncStatus('ok', '✓ đã sync');
-    toast(`☁ Tải từ server: ${Object.keys(decks).length} bộ thẻ, ${total} thẻ`);
+    toast(`☁ Sync xong: ${Object.keys(decks).length} bộ thẻ, ${total} thẻ`);
   } catch(err) {
     setSyncStatus('err', '✗ lỗi tải');
     console.error('Pull error:', err);
