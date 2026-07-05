@@ -562,11 +562,11 @@ async function pushToSupabase() {
       if (de) throw de;
     }
 
-    // Upsert all cards — delete then re-insert per deck (simplest for batch)
+    // Upsert all cards — delete then re-insert per deck with batching
     for (const [deckId, d] of Object.entries(decks)) {
       // Delete existing cards for this deck
       await sb.from('cards').delete().eq('deck_id', deckId);
-      // Re-insert
+      // Re-insert in batches of 1000
       if (d.cards.length) {
         const cardRows = d.cards.map(c => ({
           deck_id: deckId,
@@ -574,8 +574,12 @@ async function pushToSupabase() {
           phonetic: c.phonetic || '', example: c.example || '',
           due: c.due || null, interval: c.interval || 0
         }));
-        const { error: ce } = await sb.from('cards').insert(cardRows);
-        if (ce) throw ce;
+        // Batch insert in chunks of 1000
+        for (let i = 0; i < cardRows.length; i += 1000) {
+          const batch = cardRows.slice(i, i + 1000);
+          const { error: ce } = await sb.from('cards').insert(batch);
+          if (ce) throw ce;
+        }
       }
     }
 
@@ -601,14 +605,15 @@ async function pullFromSupabase() {
     const { data: deckData, error: de } = await sb.from('decks').select('id, name').order('created_at');
     if (de) throw de;
 
-    // Fetch all cards
+    // Fetch all cards (limit 10000)
     const { data: cardData, error: ce } = await sb.from('cards')
       .select('deck_id, word, meaning, phonetic, example, due, interval')
-      .order('id');
+      .order('id')
+      .limit(10000);
     if (ce) throw ce;
 
     // Fetch study log
-    const { data: logData, error: le } = await sb.from('study_log').select('date, count');
+    const { data: logData, error: le } = await sb.from('study_log').select('date, count').limit(10000);
     if (le) throw le;
 
     if (!deckData || !deckData.length) {
