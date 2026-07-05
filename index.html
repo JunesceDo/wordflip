@@ -465,6 +465,7 @@ const CONFIG = {
 let sb = null;  // Supabase client
 let decks    = JSON.parse(localStorage.getItem('wf_decks') || '{}');
 let studyLog = JSON.parse(localStorage.getItem('wf_log')   || '{}');
+let lastSyncTime = parseInt(localStorage.getItem('wf_last_sync') || '0');  // Track last sync
 let rawData = [], columns = [];
 let currentDeckId = null, studyQueue = [], currentIdx = 0, isFlipped = false;
 let sessionStats = { again:0, hard:0, good:0, easy:0 };
@@ -472,7 +473,10 @@ let currentQuizDeckId = null, quizQueue = [], quizIdx = 0, quizCorrect = 0, quiz
 let syncPending = false;
 
 // ─── LOCAL SAVE ───────────────────────────────────────
-function save() { localStorage.setItem('wf_decks', JSON.stringify(decks)); }
+function save() {
+  localStorage.setItem('wf_decks', JSON.stringify(decks));
+  localStorage.setItem('wf_last_sync', Date.now().toString());
+}
 function logStudy(n=1) {
   const k = new Date().toISOString().slice(0,10);
   studyLog[k] = (studyLog[k]||0) + n;
@@ -562,22 +566,22 @@ async function pushToSupabase() {
       if (de) throw de;
     }
 
-    // Upsert all cards — delete then re-insert per deck with batching
+    // Upsert all cards with timestamps — smart merge strategy
     for (const [deckId, d] of Object.entries(decks)) {
-      // Delete existing cards for this deck
-      await sb.from('cards').delete().eq('deck_id', deckId);
-      // Re-insert in batches of 1000
       if (d.cards.length) {
+        const now = Date.now();
         const cardRows = d.cards.map(c => ({
           deck_id: deckId,
           word: c.word, meaning: c.meaning,
           phonetic: c.phonetic || '', example: c.example || '',
-          due: c.due || null, interval: c.interval || 0
+          due: c.due || null, interval: c.interval || 0,
+          created_at: c.created_at || now,  // Add timestamp if missing
+          updated_at: c.updated_at || now
         }));
-        // Batch insert in chunks of 1000
+        // Upsert in batches of 1000 (Supabase will merge by card content, newest timestamp wins)
         for (let i = 0; i < cardRows.length; i += 1000) {
           const batch = cardRows.slice(i, i + 1000);
-          const { error: ce } = await sb.from('cards').insert(batch);
+          const { error: ce } = await sb.from('cards').upsert(batch, { onConflict: 'deck_id,word' });
           if (ce) throw ce;
         }
       }
@@ -626,14 +630,15 @@ async function pullFromSupabase() {
       return;
     }
 
-    // Build decks from server data
+    // Build decks from server data with timestamps
     const serverDecks = {};
     for (const d of deckData) serverDecks[d.id] = { name: d.name, cards: [] };
     for (const c of (cardData || [])) {
       if (serverDecks[c.deck_id]) {
         serverDecks[c.deck_id].cards.push({
           word: c.word, meaning: c.meaning, phonetic: c.phonetic || '',
-          example: c.example || '', due: c.due || null, interval: c.interval || 0
+          example: c.example || '', due: c.due || null, interval: c.interval || 0,
+          created_at: c.created_at || 0, updated_at: c.updated_at || 0
         });
       }
     }
@@ -641,33 +646,66 @@ async function pullFromSupabase() {
     const serverLog = {};
     for (const l of (logData || [])) serverLog[l.date] = l.count;
 
-    const localCardCount  = Object.values(decks).reduce((s,d)=>s+d.cards.length,0);
-    const serverCardCount = Object.values(serverDecks).reduce((s,d)=>s+d.cards.length,0);
+    // ═══════════════════════════════════════════════════════════════
+    // SMART MERGE: Keep all decks, merge cards intelligently
+    // ═══════════════════════════════════════════════════════════════
+    const merged = {};
 
-    // Local luôn thắng nếu có nhiều thẻ hơn — push lên server rồi dùng local
-    if (localCardCount > serverCardCount) {
-      setSyncStatus('ok', '✓ đồng bộ');
-      toast(`☁ Local (${localCardCount}) > Server (${serverCardCount}) — đang đẩy lên...`);
-      await pushToSupabase();
-      return;
+    // 1. Include all local decks
+    for (const [id, localDeck] of Object.entries(decks)) {
+      merged[id] = { name: localDeck.name, cards: [...localDeck.cards] };
     }
 
-    // Server có nhiều hơn hoặc bằng — merge: giữ local-only decks + lấy server decks
-    const merged = { ...decks };
-    for (const [id, d] of Object.entries(serverDecks)) {
-      // Nếu deck này server có nhiều thẻ hơn local → dùng server
-      const localDeck = decks[id];
-      if (!localDeck || d.cards.length >= localDeck.cards.length) {
-        merged[id] = d;
+    // 2. Include/merge server decks
+    for (const [id, serverDeck] of Object.entries(serverDecks)) {
+      if (!merged[id]) {
+        // New deck from server → import it
+        merged[id] = { name: serverDeck.name, cards: [...serverDeck.cards] };
+      } else {
+        // Deck exists on both → smart merge cards
+        const localCards = merged[id].cards;
+        const serverCards = serverDeck.cards;
+        const mergedCards = [...localCards];
+
+        // For each server card, check if we have it locally
+        for (const sCard of serverCards) {
+          const localIdx = localCards.findIndex(lc =>
+            lc.word === sCard.word && lc.meaning === sCard.meaning
+          );
+
+          if (localIdx === -1) {
+            // Server has a card we don't → add it
+            mergedCards.push(sCard);
+          } else {
+            // We have matching card → use NEWEST version (by updated_at timestamp)
+            const localCard = localCards[localIdx];
+            const localTime = localCard.updated_at || 0;
+            const serverTime = sCard.updated_at || 0;
+
+            if (serverTime > localTime) {
+              // Server version is newer → use it (but preserve local due/interval for study state)
+              mergedCards[localIdx] = {
+                ...sCard,
+                due: localCard.due,          // Preserve local study state
+                interval: localCard.interval
+              };
+            }
+            // else: keep local version (it's newer)
+          }
+        }
+
+        merged[id].cards = mergedCards;
       }
     }
+
     decks = merged;
     studyLog = { ...studyLog, ...serverLog };
     save(); localStorage.setItem('wf_log', JSON.stringify(studyLog));
     renderLibrary();
-    const total = Object.values(decks).reduce((s,d)=>s+d.cards.length,0);
+    const totalLocal = Object.values(decks).reduce((s,d)=>s+d.cards.length,0);
+    const totalServer = Object.values(serverDecks).reduce((s,d)=>s+d.cards.length,0);
     setSyncStatus('ok', '✓ đã sync');
-    toast(`☁ Sync xong: ${Object.keys(decks).length} bộ thẻ, ${total} thẻ`);
+    toast(`☁ Merged: Server(${totalServer}) + Local = ${totalLocal} thẻ`);
   } catch(err) {
     setSyncStatus('err', '✗ lỗi tải');
     console.error('Pull error:', err);
@@ -931,12 +969,13 @@ function saveManualCards() {
     did='deck_'+Date.now(); decks[did]={name:dn,cards:[]};
   }
   const cards=[];
+  const now = Date.now();
   document.querySelectorAll('#modal-card-list .card-row').forEach(row=>{
     const id=row.id.replace('row-','');
     const w=(document.getElementById('f-'+id)||{}).value?.trim();
     const m=(document.getElementById('m-'+id)||{}).value?.trim();
     const ph=(document.getElementById('p-'+id)||{}).value?.trim()||'';
-    if (w&&m) cards.push({word:w,meaning:m,phonetic:ph,example:'',due:null,interval:0});
+    if (w&&m) cards.push({word:w,meaning:m,phonetic:ph,example:'',due:null,interval:0,created_at:now,updated_at:now});
   });
   if (!cards.length){toast('Chưa có thẻ nào hợp lệ','error');return;}
   decks[did].cards.push(...cards); save(); closeAddModal(); renderLibrary();
@@ -1188,11 +1227,12 @@ function importDeck() {
   const mI=parseInt(document.getElementById('col-meaning').value);
   const pI=document.getElementById('col-phonetic').value;
   const eI=document.getElementById('col-example').value;
+  const now = Date.now();
   const cards=rawData.slice(1).filter(r=>r[wI]||r[mI]).map(r=>({
     word:String(r[wI]||'').trim(),meaning:String(r[mI]||'').trim(),
     phonetic:pI?String(r[parseInt(pI)]||'').trim():'',
     example:eI?String(r[parseInt(eI)]||'').trim():'',
-    due:null,interval:0
+    due:null,interval:0,created_at:now,updated_at:now
   }));
   if(!cards.length){toast('Không có dữ liệu hợp lệ','error');return;}
   const id='deck_'+Date.now();
