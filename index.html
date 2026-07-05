@@ -609,12 +609,24 @@ async function pullFromSupabase() {
     const { data: deckData, error: de } = await sb.from('decks').select('id, name').order('created_at');
     if (de) throw de;
 
-    // Fetch all cards (limit 10000)
-    const { data: cardData, error: ce } = await sb.from('cards')
-      .select('deck_id, word, meaning, phonetic, example, due, interval')
-      .order('id')
-      .limit(10000);
-    if (ce) throw ce;
+    // Fetch all cards with batching (1000 per batch to handle Supabase limits)
+    let cardData = [];
+    let offset = 0;
+    let hasMore = true;
+    while (hasMore) {
+      const { data: batch, error: ce } = await sb.from('cards')
+        .select('deck_id, word, meaning, phonetic, example, due, interval, created_at, updated_at')
+        .order('id')
+        .range(offset, offset + 999);
+      if (ce) throw ce;
+      if (!batch || batch.length === 0) {
+        hasMore = false;
+      } else {
+        cardData = cardData.concat(batch);
+        offset += batch.length;
+        if (batch.length < 1000) hasMore = false;
+      }
+    }
 
     // Fetch study log
     const { data: logData, error: le } = await sb.from('study_log').select('date, count').limit(10000);
